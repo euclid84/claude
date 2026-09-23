@@ -7,20 +7,18 @@
 1. [sheets.new](https://sheets.new) 로 새 스프레드시트를 만들고 이름을 `우리가족 진료기록`으로 바꿉니다.
 2. 메뉴 **확장 프로그램 → Apps Script** 를 엽니다.
 
-## 2. 코드 붙여넣기
+## 2. 코드 붙여넣기 (파일 2개)
 
-Apps Script 편집기에서 이 저장소의 `apps-script/` 폴더 파일을 똑같은 이름으로 만듭니다.
+PC에서 하는 것을 권장합니다. 저장소의 `dist/` 폴더에 붙여넣기용 파일 2개가 있습니다.
 
-| 저장소 파일 | Apps Script에서 만들 파일 |
-|---|---|
-| `Code.gs` | 기본 `Code.gs` 내용을 지우고 붙여넣기 |
-| `Db.gs`, `Auth.gs`, `Records.gs`, `Gemini.gs` | **+ → 스크립트**, 이름은 확장자 없이 (`Db` 등) |
-| `Index.html`, `App.html`, `Crypto.html`, `Styles.html` | **+ → HTML**, 이름은 확장자 없이 (`Index` 등) |
-| `appsscript.json` | ⚙️ 프로젝트 설정 → "appsscript.json 매니페스트 파일 표시" 체크 후 내용 교체 |
+1. GitHub에서 `dist/Code.gs` 열기 → 오른쪽 위 **복사 버튼(Copy raw file)** 클릭
+2. Apps Script 편집기 왼쪽 `Code.gs` 클릭 → 안에 있던 내용을 전부 지우고 붙여넣기 → 💾 저장
+3. 왼쪽 **파일 옆 + → HTML** → 이름을 `Index` 로 입력 (`.html`은 자동으로 붙음)
+4. GitHub에서 `dist/Index.html` 열기 → 복사 버튼 → 새로 만든 `Index` 안의 내용을 전부 지우고 붙여넣기 → 💾 저장
 
-> 개발자라면 [clasp](https://github.com/google/clasp)로 `apps-script/` 폴더를 그대로 `clasp push` 해도 됩니다.
+저장한 뒤 시트 탭으로 돌아가 **새로고침(F5)** 하면 상단 메뉴에 `🩺 진료기록 관리`가 생깁니다.
 
-저장(💾) 후 시트 탭으로 돌아가 **새로고침**하면 상단에 `🩺 진료기록 관리` 메뉴가 생깁니다.
+> 개발자용: `apps-script/` 폴더가 원본입니다. 원본을 고친 뒤 `scripts/build.sh`를 실행하면 `dist/`가 다시 만들어집니다. [clasp](https://github.com/google/clasp)로 `apps-script/`를 그대로 올려도 됩니다.
 
 ## 3. 초기 설정
 
