@@ -579,13 +579,14 @@ function renderAdd() {
     header('결과지 등록', true) +
     '<div class="card">' +
     '<h3>1. 사진으로 등록</h3>' +
-    '<p class="muted">결과지, 검진표, 처방전, 문자 캡처 화면 등 (최대 10장). 병원 문자 대화를 여러 장 캡처해서 한 번에 올리면 날짜별로 나눠서 정리해 드려요.</p>' +
+    '<p class="muted">결과지, 검진표, 처방전, 문자 캡처 화면, 건강검진 PDF 등 (최대 10개). 병원 문자 대화를 여러 장 캡처해서 한 번에 올리면 날짜별로 나눠서 정리해 드려요.</p>' +
     '<div class="row">' +
     '<label class="btn grow" style="margin:0;text-align:center;font-weight:600">📷 사진 찍기<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>' +
     '<label class="btn grow" style="margin:0;text-align:center;font-weight:600">🖼 앨범에서 선택<input id="gal" type="file" accept="image/*" multiple hidden></label>' +
+    '<label class="btn grow" style="margin:0;text-align:center;font-weight:600">📄 PDF·파일 선택<input id="pdf" type="file" accept="application/pdf,.pdf,image/*" multiple hidden></label>' +
     '</div>' +
     '<div class="thumbs" id="thumbs">' + S.pendingImages.map(function (img, i) {
-      return '<div class="t"><img src="' + img.url + '" alt=""><button class="x" data-i="' + i + '">✕</button></div>';
+      return '<div class="t">' + thumbHtml(img) + '<button class="x" data-i="' + i + '">✕</button></div>';
     }).join('') + '</div>' +
     '<h3 style="margin-top:20px">2. 문자·텍스트로 등록</h3>' +
     '<p class="muted">병원/검진센터에서 받은 문자나 카카오톡 알림을 길게 눌러 복사한 뒤 붙여넣으세요.</p>' +
@@ -599,11 +600,12 @@ function renderAdd() {
   bindBack(function () { S.addText = ''; S.addHint = ''; viewHome(); });
   on('#cam', 'change', addFiles);
   on('#gal', 'change', addFiles);
+  on('#pdf', 'change', addFiles);
   on('#txt', 'input', function () { S.addText = this.value; });
   on('#hint', 'input', function () { S.addHint = this.value; });
   on('.thumbs .x', 'click', function () {
     const i = Number(this.getAttribute('data-i'));
-    URL.revokeObjectURL(S.pendingImages[i].url);
+    if (S.pendingImages[i].url) URL.revokeObjectURL(S.pendingImages[i].url);
     S.pendingImages.splice(i, 1);
     renderAdd();
   });
@@ -618,16 +620,58 @@ async function addFiles() {
   const files = Array.prototype.slice.call(this.files || []);
   if (!files.length) return;
   try {
-    loading('사진을 준비하는 중…');
+    loading('파일을 준비하는 중…');
     for (const f of files) {
-      if (S.pendingImages.length >= 10) { toast('사진은 한 번에 10장까지 가능합니다.'); break; }
-      const img = await resizeImage(f);
-      img.takenAt = f.lastModified || Date.now();
-      S.pendingImages.push(img);
+      if (S.pendingImages.length >= MAX_FILES) { toast('사진·PDF는 한 번에 ' + MAX_FILES + '개까지 가능합니다.'); break; }
+      S.pendingImages.push(await prepareFile(f));
     }
     done();
     renderAdd();
   } catch (e) { showError(e); }
+}
+
+const MAX_FILES = 10;
+const MAX_RAW_BYTES = 10 * 1024 * 1024;   // PDF 등 원본 그대로 올리는 파일 1개 최대 10MB
+const MAX_ANALYZE_BYTES = 18 * 1024 * 1024; // AI 분석 1번에 보낼 수 있는 총량
+
+function isPdf(file) { return file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''); }
+
+/**
+ * 올릴 파일 준비
+ *  - 사진: 1600px JPEG로 줄임
+ *  - PDF: 원본 그대로 (AI가 PDF를 직접 읽음)
+ *  - 브라우저가 못 여는 HEIC 사진: 원본 그대로
+ */
+async function prepareFile(file) {
+  const takenAt = file.lastModified || Date.now();
+  const raw = async function (mimeType) {
+    if (file.size > MAX_RAW_BYTES) throw new Error('"' + file.name + '" 파일이 너무 큽니다 (최대 10MB).');
+    return { mimeType: mimeType, bytes: new Uint8Array(await file.arrayBuffer()), url: null, name: file.name, takenAt: takenAt };
+  };
+  if (isPdf(file)) return raw('application/pdf');
+  try {
+    const img = await resizeImage(file);
+    img.takenAt = takenAt;
+    return img;
+  } catch (e) {
+    if (/heic|heif/i.test(file.type + file.name)) return raw(/heif/i.test(file.type + file.name) ? 'image/heif' : 'image/heic');
+    throw e;
+  }
+}
+
+function thumbHtml(item) {
+  if (item.url) return '<img src="' + item.url + '" alt="">';
+  const label = item.mimeType === 'application/pdf' ? '📄 PDF' : '🖼 사진';
+  return '<div class="btn" style="width:96px;height:96px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:.75em;overflow:hidden;padding:4px">' +
+    '<b>' + label + '</b><span style="word-break:break-all">' + esc(String(item.name || '').slice(0, 24)) + '</span></div>';
+}
+
+/** 복호화한 파일의 앞부분으로 종류를 알아낸다 (저장할 때 종류를 따로 적지 않으므로) */
+function sniffType(b) {
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'application/pdf';
+  if (b[0] === 0x89 && b[1] === 0x50) return 'image/png';
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return 'image/heic';
+  return 'image/jpeg';
 }
 
 /** 사진을 긴 변 1600px JPEG로 줄인다 (업로드/AI 분석 속도와 용량을 위해) */
@@ -650,14 +694,16 @@ function resizeImage(file) {
         });
       }, 'image/jpeg', 0.85);
     };
-    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('이 사진 형식은 열 수 없습니다. 다른 사진을 선택해 주세요.')); };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('"' + file.name + '" 파일은 열 수 없습니다. 사진 또는 PDF만 올릴 수 있어요.')); };
     img.src = url;
   });
 }
 
 async function analyze() {
   const text = S.addText || '';
-  if (!S.pendingImages.length && !text.trim()) return showError(new Error('사진을 추가하거나 문자 내용을 붙여넣어 주세요.'));
+  if (!S.pendingImages.length && !text.trim()) return showError(new Error('사진·PDF를 추가하거나 문자 내용을 붙여넣어 주세요.'));
+  const total = S.pendingImages.reduce(function (n, i) { return n + i.bytes.length; }, 0);
+  if (total > MAX_ANALYZE_BYTES) return showError(new Error('한 번에 분석하기엔 파일이 너무 큽니다. 파일 수를 줄여서 나눠 올려주세요.'));
   try {
     loading('AI가 결과를 읽고 있어요… (사진이 많으면 1분 정도 걸려요)');
     const taken = S.pendingImages.map(function (i) { return i.takenAt || Date.now(); });
@@ -737,7 +783,7 @@ function renderReview() {
         (d.doctor_opinion || d.summary || d.next_visit ? '<p class="muted">' + esc(d.doctor_opinion || d.next_visit || d.summary) + '</p>' : '') +
         '</div></div>';
     }).join('') +
-    '<p class="muted">함께 올린 사진 ' + S.pendingImages.length + '장은 저장하는 기록들에 원본으로 같이 붙습니다.</p>' +
+    '<p class="muted">함께 올린 사진·PDF ' + S.pendingImages.length + '개는 저장하는 기록들에 원본으로 같이 붙습니다.</p>' +
     '<button class="primary fab" id="saveAll"' + (count ? '' : ' disabled') + '>선택한 ' + count + '건 저장</button>'
   );
   bindBack(function () {
@@ -869,9 +915,9 @@ function renderEdit() {
     '<h2>사진</h2>' +
     '<div class="thumbs">' +
     S.keptImageIds.map(function (id, i) { return '<div class="t"><div class="btn" style="width:96px;height:96px;display:flex;align-items:center;justify-content:center">📷 ' + (i + 1) + '</div><button class="x" data-kept="' + i + '">✕</button></div>'; }).join('') +
-    S.pendingImages.map(function (img, i) { return '<div class="t"><img src="' + img.url + '" alt=""><button class="x" data-pend="' + i + '">✕</button></div>'; }).join('') +
+    S.pendingImages.map(function (img, i) { return '<div class="t">' + thumbHtml(img) + '<button class="x" data-pend="' + i + '">✕</button></div>'; }).join('') +
     '</div>' +
-    '<label class="btn block" style="text-align:center">+ 사진 추가<input id="more" type="file" accept="image/*" multiple hidden></label>' +
+    '<label class="btn block" style="text-align:center">+ 사진·PDF 추가<input id="more" type="file" accept="image/*,application/pdf,.pdf" multiple hidden></label>' +
 
     '<p style="margin-top:20px"><button class="primary block" id="save">💾 저장하기</button></p>')
   );
@@ -895,8 +941,8 @@ function renderEdit() {
   on('[data-pend]', 'click', function () { S.pendingImages.splice(Number(this.getAttribute('data-pend')), 1); renderEdit(); });
   on('#more', 'change', async function () {
     try {
-      loading('사진을 준비하는 중…');
-      for (const f of Array.prototype.slice.call(this.files || [])) S.pendingImages.push(await resizeImage(f));
+      loading('파일을 준비하는 중…');
+      for (const f of Array.prototype.slice.call(this.files || [])) S.pendingImages.push(await prepareFile(f));
       done(); renderEdit();
     } catch (e) { showError(e); }
   });
@@ -983,7 +1029,7 @@ function viewDetail(recordId) {
 
     (d.memo ? '<div class="card"><h3>📝 내 메모</h3><p style="white-space:pre-wrap">' + esc(d.memo) + '</p></div>' : '') +
 
-    (r.imageIds.length ? '<div class="card"><h3>📷 원본 사진 (' + r.imageIds.length + ')</h3><div id="photos"><button class="block" id="loadPhotos">사진 보기</button></div></div>' : '') +
+    (r.imageIds.length ? '<div class="card"><h3>📷 원본 사진·PDF (' + r.imageIds.length + ')</h3><div id="photos"><button class="block" id="loadPhotos">원본 보기</button></div></div>' : '') +
     (d.raw_text ? '<div class="card"><details><summary>원문 텍스트</summary><p style="white-space:pre-wrap">' + esc(d.raw_text) + '</p></details></div>' : '') +
 
     '<div class="row" style="margin-top:16px"><button class="grow" id="edit">✏️ 수정</button><button class="grow danger" id="del">🗑 삭제</button></div>'
@@ -994,12 +1040,19 @@ function viewDetail(recordId) {
   on('tr[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), recordId); });
   on('#loadPhotos', 'click', async function () {
     try {
-      loading('사진을 불러오는 중…');
+      loading('원본을 불러오는 중…');
       let html = '';
       for (const id of r.imageIds) {
         const res = await call('api_getImage', S.token, id);
         const bytes = await Crypt.decryptBlobB64(S.dek, res.encB64);
-        html += '<img class="photo-full" src="' + URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })) + '" alt="결과지 사진">';
+        const type = sniffType(bytes);
+        const url = URL.createObjectURL(new Blob([bytes], { type: type }));
+        if (type === 'application/pdf') {
+          html += '<iframe class="photo-full" style="height:70vh" src="' + url + '" title="결과지 PDF"></iframe>' +
+            '<a class="btn block" style="display:block;text-align:center;text-decoration:none" href="' + url + '" target="_blank" download="결과지.pdf">📄 PDF 새 창에서 열기 / 저장</a>';
+        } else {
+          html += '<img class="photo-full" src="' + url + '" alt="결과지 사진">';
+        }
       }
       $('#photos').innerHTML = html;
       done();

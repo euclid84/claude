@@ -89,11 +89,11 @@ function api_extract(token, req) {
   const parts = [{
     text: [
       '다음은 한국 병원/검진기관의 진료 결과 자료입니다. 형태가 다양합니다:',
-      '결과지 사진, 건강검진 결과표, 처방전, 병원 문자메시지(또는 문자 대화 화면 캡처) 등.',
+      '결과지 사진, 건강검진 결과표(PDF 포함), 처방전, 병원 문자메시지(또는 문자 대화 화면 캡처) 등.',
       '',
       '[기록 나누기]',
       '- 자료 안에 서로 다른 날짜의 결과가 여러 개 있으면(예: 문자 대화 캡처에 몇 년치 결과 문자가 있는 경우) 날짜/방문별로 records를 나누세요.',
-      '- 한 결과지의 여러 페이지는 하나의 record로 합치세요.',
+      '- 한 결과지의 여러 페이지(또는 PDF의 여러 쪽)는 하나의 record로 합치세요. 단, 한 PDF 안에 서로 다른 날짜의 결과가 있으면 날짜별로 나누세요.',
       '- 여러 캡처에 같은 문자가 겹쳐 보이면 한 번만 넣으세요.',
       '- 예약 안내·검진 시기 알림 문자는 record_type을 "문자·알림"으로 하고 tests는 비우고 next_visit/follow_up에 내용을 적으세요.',
       '- records는 오래된 날짜부터 정렬하세요.',
@@ -119,8 +119,8 @@ function api_extract(token, req) {
     ].join('\n')
   }];
   images.forEach(function (img) {
-    if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(img.mimeType) || !B64_RE.test(img.data)) {
-      throw new Error('지원하지 않는 사진 형식입니다.');
+    if (!/^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/.test(img.mimeType) || !B64_RE.test(img.data)) {
+      throw new Error('지원하지 않는 파일 형식입니다. 사진 또는 PDF만 올릴 수 있어요.');
     }
     parts.push({ inline_data: { mime_type: img.mimeType, data: img.data } });
   });

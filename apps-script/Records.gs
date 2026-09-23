@@ -6,7 +6,7 @@
  */
 
 const MAX_CELL_CHARS = 49000;       // 구글시트 셀 한도(50,000자) 여유분
-const MAX_IMAGE_B64_CHARS = 8000000; // 암호화된 사진 1장 최대 약 6MB
+const MAX_IMAGE_B64_CHARS = 14500000; // 암호화된 사진/PDF 1개 최대 약 10MB
 
 /* ---------------- 진료기록 ---------------- */
 
@@ -105,7 +105,7 @@ function api_deleteRecord(token, recordId) {
 function api_uploadImage(token, encB64) {
   const s = requireSession_(token);
   if (typeof encB64 !== 'string' || !B64_RE.test(encB64) || encB64.length > MAX_IMAGE_B64_CHARS) {
-    throw new Error('사진 파일이 너무 크거나 형식이 올바르지 않습니다.');
+    throw new Error('파일이 너무 크거나(최대 10MB) 형식이 올바르지 않습니다.');
   }
   const folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('IMAGE_FOLDER_ID'));
   const blob = Utilities.newBlob(Utilities.base64Decode(encB64), 'application/octet-stream', newId_('img') + '.enc');
