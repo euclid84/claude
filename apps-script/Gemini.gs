@@ -8,12 +8,13 @@
 const RECORD_TYPES = ['정기건강검진', '외래진료', '입원·수술', '검사결과', '처방·약', '문자·알림', '기타'];
 const TEST_FLAGS = ['정상', '높음', '낮음', '경계', '이상', '판정없음'];
 
-const EXTRACT_SCHEMA = {
+const RECORD_SCHEMA = {
   type: 'OBJECT',
   properties: {
     record_type: { type: 'STRING', enum: RECORD_TYPES, description: '결과지의 종류' },
     title: { type: 'STRING', description: '한눈에 알아볼 짧은 제목. 예: "2026 국가건강검진", "정형외과 무릎 X-ray"' },
     date: { type: 'STRING', description: '진료/검사 날짜 YYYY-MM-DD. 모르면 빈 문자열' },
+    date_confidence: { type: 'STRING', enum: ['확실', '추정', '모름'], description: '날짜가 자료에 분명히 보이면 확실, 앞뒤 문맥으로 짐작했으면 추정' },
     hospital: { type: 'STRING' },
     department: { type: 'STRING', description: '진료과' },
     doctor: { type: 'STRING', description: '담당 의사 이름. 없으면 빈 문자열' },
@@ -26,7 +27,7 @@ const EXTRACT_SCHEMA = {
         type: 'OBJECT',
         properties: {
           category: { type: 'STRING', description: '예: 혈액, 소변, 간기능, 신장기능, 영상, 신체계측' },
-          name: { type: 'STRING', description: '검사 항목명 (원문 그대로)' },
+          name: { type: 'STRING', description: '표준 검사명 (원문 표기가 다르면 note에 원문 표기)' },
           value: { type: 'STRING' },
           unit: { type: 'STRING' },
           reference_range: { type: 'STRING', description: '참고치/정상범위' },
@@ -51,10 +52,27 @@ const EXTRACT_SCHEMA = {
     },
     next_visit: { type: 'STRING', description: '다음 예약/재검 안내' },
     follow_up: { type: 'ARRAY', items: { type: 'STRING' }, description: '환자가 해야 할 일(재검, 금식, 생활습관 등)' },
-    raw_text: { type: 'STRING', description: '결과지에서 읽은 원문 텍스트 전체' }
+    raw_text: { type: 'STRING', description: '이 기록에 해당하는 원문 텍스트 (문자라면 그 문자 1건 전체)' }
   },
-  required: ['record_type', 'title', 'date', 'summary', 'tests']
+  required: ['record_type', 'title', 'date', 'date_confidence', 'summary', 'tests']
 };
+
+const EXTRACT_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    records: { type: 'ARRAY', items: RECORD_SCHEMA, description: '날짜/방문별로 나눈 기록들. 오래된 것부터' }
+  },
+  required: ['records']
+};
+
+/** 검사명 표준화: 같은 검사가 다른 이름으로 들어와도 추이 비교가 되도록 */
+const TEST_NAME_GUIDE = [
+  'AST(SGOT)', 'ALT(SGPT)', '감마지티피(γ-GTP)', '총빌리루빈', '알부민',
+  'HBsAg', 'Anti-HBs', 'HBeAg', 'Anti-HBe', 'HBV-DNA', 'AFP', 'PIVKA-II',
+  '총콜레스테롤', 'LDL 콜레스테롤', 'HDL 콜레스테롤', '중성지방', '공복혈당', '당화혈색소(HbA1c)',
+  '크레아티닌', 'eGFR', '요산', '혈색소(Hb)', '혈소판', '백혈구',
+  '수축기 혈압', '이완기 혈압', '체질량지수(BMI)', '허리둘레'
+].join(', ');
 
 /**
  * 결과지 분석
@@ -64,18 +82,40 @@ function api_extract(token, req) {
   const s = requireSession_(token);
   checkRateLimit_(s.userId);
 
-  const images = (req.images || []).slice(0, 6);
+  const images = (req.images || []).slice(0, 10);
   const text = String(req.text || '').slice(0, 20000);
   if (!images.length && !text.trim()) throw new Error('사진이나 문자 내용을 넣어주세요.');
 
   const parts = [{
     text: [
-      '다음은 한국 병원/검진기관의 진료 결과 자료입니다. (결과지 사진, 문자메시지, 검진 결과표, 처방전 등 형태가 다양합니다)',
-      '자료에 적힌 내용만 정확히 추출하고, 없는 정보는 빈 값으로 두세요. 추측으로 수치를 만들지 마세요.',
-      '여러 장의 사진은 같은 결과지의 여러 페이지입니다.',
-      '검사 수치의 flag는 결과지에 표시된 H/L/판정을 우선 사용하고, 표시가 없으면 참고치와 비교해 판단하세요.',
-      '오늘 날짜: ' + Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd'),
-      req.hint ? '사용자 메모: ' + String(req.hint).slice(0, 500) : ''
+      '다음은 한국 병원/검진기관의 진료 결과 자료입니다. 형태가 다양합니다:',
+      '결과지 사진, 건강검진 결과표, 처방전, 병원 문자메시지(또는 문자 대화 화면 캡처) 등.',
+      '',
+      '[기록 나누기]',
+      '- 자료 안에 서로 다른 날짜의 결과가 여러 개 있으면(예: 문자 대화 캡처에 몇 년치 결과 문자가 있는 경우) 날짜/방문별로 records를 나누세요.',
+      '- 한 결과지의 여러 페이지는 하나의 record로 합치세요.',
+      '- 여러 캡처에 같은 문자가 겹쳐 보이면 한 번만 넣으세요.',
+      '- 예약 안내·검진 시기 알림 문자는 record_type을 "문자·알림"으로 하고 tests는 비우고 next_visit/follow_up에 내용을 적으세요.',
+      '- records는 오래된 날짜부터 정렬하세요.',
+      '',
+      '[날짜]',
+      '- 문자 캡처에서는 말풍선 위의 날짜 구분선(수신 시각)을 그 문자의 날짜로 쓰세요. 연도가 없으면 기준일 이전의 가장 가까운 날짜입니다.',
+      '- 상대 날짜는 아래 표로 바꾸세요. 요일 계산을 직접 하지 말고 표를 그대로 쓰세요.',
+      relativeDateTable_(req.referenceDate),
+      '- 날짜 구분선이 잘려서 안 보이면 앞뒤 문자의 날짜와 검사 주기를 보고 추정한 날짜를 넣고 date_confidence를 "추정"으로 하세요.',
+      '',
+      '[검사 수치]',
+      '- 자료에 적힌 값만 추출하고 없는 값은 만들지 마세요.',
+      '- "SGOT/PT 30/40"처럼 묶인 값은 AST(SGOT)=30, ALT(SGPT)=40 두 항목으로 나누세요. 혈압 "130/85"도 수축기/이완기로 나누세요.',
+      '- 검사명은 가능하면 다음 표준 이름을 쓰세요: ' + TEST_NAME_GUIDE,
+      '- "<146 cpm" 같은 부등호 값은 value="<146", unit="cpm"처럼 그대로 두세요. 정성 결과는 "양성(+)", "음성(-)"으로 적으세요.',
+      '- reference_range는 자료에 적힌 경우에만 채우세요.',
+      '- flag: 자료의 H/L 표시나 판정을 우선 쓰세요. 참고치가 없으면 의사 코멘트를 따르세요(예: "정상"이면 정상, "약간 높지만 임상적 의미 없음"이면 해당 수치를 경계). 판단 근거가 없는 정성검사는 판정없음.',
+      '- doctor_opinion에는 의사 코멘트 원문을 최대한 그대로 적으세요.',
+      '',
+      '[기타]',
+      '- 환자 이름, 주민번호, 전화번호는 어디에도 적지 마세요. raw_text에서도 이름은 "OOO"로 가리세요.',
+      req.hint ? '- 사용자 메모: ' + String(req.hint).slice(0, 500) : ''
     ].join('\n')
   }];
   images.forEach(function (img) {
@@ -95,10 +135,31 @@ function api_extract(token, req) {
     }
   });
   try {
-    return JSON.parse(result);
+    const parsed = JSON.parse(result);
+    const records = Array.isArray(parsed) ? parsed : (parsed.records || [parsed]);
+    return { records: records };
   } catch (e) {
     throw new Error('AI 응답을 해석하지 못했습니다. 다시 시도하거나 사진을 더 선명하게 찍어주세요.');
   }
+}
+
+/**
+ * 문자 캡처의 "어제/그저께/(목요일)" 같은 표현을 실제 날짜로 바꿀 수 있게 표를 만든다.
+ * referenceDate: 캡처한 날(YYYY-MM-DD). 없으면 오늘.
+ */
+function relativeDateTable_(referenceDate) {
+  const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
+  let base = new Date();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(referenceDate || ''))) base = new Date(referenceDate + 'T12:00:00+09:00');
+  const fmt = function (d) { return Utilities.formatDate(d, 'Asia/Seoul', 'yyyy-MM-dd'); };
+  const dayOf = function (d) { return DAYS[Number(Utilities.formatDate(d, 'Asia/Seoul', 'u')) % 7]; };
+  const lines = ['  기준일(캡처한 날, 오늘): ' + fmt(base) + ' (' + dayOf(base) + ')'];
+  for (let i = 1; i <= 6; i++) {
+    const d = new Date(base.getTime() - i * 86400000);
+    const label = i === 1 ? '어제' : i === 2 ? '그저께' : '';
+    lines.push('  ' + (label ? label + ' = ' : '') + '(' + dayOf(d) + '요일) = ' + fmt(d));
+  }
+  return lines.join('\n');
 }
 
 /**

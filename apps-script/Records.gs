@@ -35,7 +35,7 @@ function api_saveRecord(token, req) {
       const rec = ownRecord_(s.userId, req.recordId);
       // 수정하면서 빠진 사진은 휴지통으로
       const oldIds = rec.image_ids ? String(rec.image_ids).split(',') : [];
-      oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }).forEach(trashImage_);
+      trashIfUnused_(s.userId, oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }), rec.record_id);
       updateRow_(SHEETS.RECORDS, rec._row, {
         updated_at: nowIso_(),
         enc_data: req.encData,
@@ -54,11 +54,42 @@ function api_saveRecord(token, req) {
   });
 }
 
+/**
+ * 여러 건 한 번에 저장 (문자 캡처처럼 한 번에 여러 기록이 나올 때)
+ * items: [{ encData, imageIds }]  — 같은 사진을 여러 기록이 함께 가리킬 수 있다.
+ */
+function api_saveRecords(token, items) {
+  const s = requireSession_(token);
+  if (!Array.isArray(items) || !items.length || items.length > 100) throw new Error('잘못된 요청입니다.');
+  const checked = {};
+  items.forEach(function (it) {
+    assertEnc_(it.encData);
+    (it.imageIds || []).forEach(function (id) {
+      if (!checked[id]) { assertOwnImage_(s.userId, String(id)); checked[id] = true; }
+    });
+  });
+  return withLock_(function () {
+    const now = nowIso_();
+    const sh = sheet_(SHEETS.RECORDS);
+    const rows = items.map(function (it) {
+      const recordId = newId_('r');
+      return {
+        record_id: recordId, user_id: s.userId, created_at: now, updated_at: now,
+        enc_data: it.encData, image_ids: (it.imageIds || []).map(String).join(',')
+      };
+    });
+    const values = rows.map(function (r) { return HEADERS.Records.map(function (h) { return cell_(r[h]); }); });
+    sh.getRange(sh.getLastRow() + 1, 1, values.length, HEADERS.Records.length).setValues(values);
+    audit_(s.userId, 'record_create_batch', String(rows.length));
+    return { recordIds: rows.map(function (r) { return r.record_id; }) };
+  });
+}
+
 function api_deleteRecord(token, recordId) {
   const s = requireSession_(token);
   return withLock_(function () {
     const rec = ownRecord_(s.userId, recordId);
-    (rec.image_ids ? String(rec.image_ids).split(',') : []).forEach(trashImage_);
+    trashIfUnused_(s.userId, rec.image_ids ? String(rec.image_ids).split(',') : [], rec.record_id);
     const chatRows = readAll_(SHEETS.CHATS)
       .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
       .map(function (c) { return c._row; });
@@ -182,6 +213,17 @@ function assertOwnImage_(userId, imageId) {
   try { file = DriveApp.getFileById(imageId); } catch (e) { throw new Error('사진을 찾을 수 없습니다.'); }
   if (file.getDescription() !== userId || file.isTrashed()) throw new Error('사진을 찾을 수 없습니다.');
   return file;
+}
+
+/** 다른 기록이 같은 사진을 쓰고 있으면 남겨두고, 아무도 안 쓰면 휴지통으로 */
+function trashIfUnused_(userId, imageIds, exceptRecordId) {
+  if (!imageIds.length) return;
+  const used = {};
+  findRows_(SHEETS.RECORDS, 'user_id', userId).forEach(function (r) {
+    if (String(r.record_id) === String(exceptRecordId)) return;
+    (r.image_ids ? String(r.image_ids).split(',') : []).forEach(function (id) { used[id] = true; });
+  });
+  imageIds.forEach(function (id) { if (!used[id]) trashImage_(id); });
 }
 
 function trashImage_(imageId) {

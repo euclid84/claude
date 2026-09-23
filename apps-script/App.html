@@ -20,7 +20,7 @@ const S = {
   token: null, username: null, dek: null,
   records: [], filter: '전체', search: '',
   doctor: null, presets: [],
-  draft: null, pendingImages: [], keptImageIds: []
+  draft: null, pendingImages: [], keptImageIds: [], review: null
 };
 
 const $app = document.getElementById('app');
@@ -317,7 +317,7 @@ function recordCard(r) {
   const abnormal = (d.tests || []).filter(isAbnormal).length;
   return '<div class="card click" data-id="' + esc(r.recordId) + '">' +
     '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span>' +
-    '<span class="muted grow">' + esc(fmtDate(d.date)) + '</span>' +
+    '<span class="muted grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (추정)' : '') + '</span>' +
     (abnormal ? '<span class="flag 높음">확인 필요 ' + abnormal + '</span>' : '') +
     (r.imageIds.length ? '<span class="muted">📷' + r.imageIds.length + '</span>' : '') + '</div>' +
     '<h3>' + esc(d.title || '(제목 없음)') + '</h3>' +
@@ -341,7 +341,7 @@ function renderAdd() {
     header('결과지 등록', true) +
     '<div class="card">' +
     '<h3>1. 사진으로 등록</h3>' +
-    '<p class="muted">결과지, 검진표, 처방전, 문자 캡처 화면 등. 여러 장이면 모두 선택하세요.</p>' +
+    '<p class="muted">결과지, 검진표, 처방전, 문자 캡처 화면 등 (최대 10장). 병원 문자 대화를 여러 장 캡처해서 한 번에 올리면 날짜별로 나눠서 정리해 드려요.</p>' +
     '<div class="row">' +
     '<label class="btn grow" style="margin:0;text-align:center;font-weight:600">📷 사진 찍기<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>' +
     '<label class="btn grow" style="margin:0;text-align:center;font-weight:600">🖼 앨범에서 선택<input id="gal" type="file" accept="image/*" multiple hidden></label>' +
@@ -382,8 +382,10 @@ async function addFiles() {
   try {
     loading('사진을 준비하는 중…');
     for (const f of files) {
-      if (S.pendingImages.length >= 6) { toast('사진은 한 번에 6장까지 가능합니다.'); break; }
-      S.pendingImages.push(await resizeImage(f));
+      if (S.pendingImages.length >= 10) { toast('사진은 한 번에 10장까지 가능합니다.'); break; }
+      const img = await resizeImage(f);
+      img.takenAt = f.lastModified || Date.now();
+      S.pendingImages.push(img);
     }
     done();
     renderAdd();
@@ -419,32 +421,148 @@ async function analyze() {
   const text = S.addText || '';
   if (!S.pendingImages.length && !text.trim()) return showError(new Error('사진을 추가하거나 문자 내용을 붙여넣어 주세요.'));
   try {
-    loading('AI가 결과지를 읽고 있어요… (10~40초)');
+    loading('AI가 결과를 읽고 있어요… (사진이 많으면 1분 정도 걸려요)');
+    const taken = S.pendingImages.map(function (i) { return i.takenAt || Date.now(); });
     const result = await call('api_extract', S.token, {
       images: S.pendingImages.map(function (i) { return { mimeType: i.mimeType, data: Crypt.b64(i.bytes) }; }),
       text: text,
-      hint: S.addHint || ''
+      hint: S.addHint || '',
+      referenceDate: ymd(new Date(taken.length ? Math.max.apply(null, taken) : Date.now()))
     });
     done();
-    result.memo = S.addHint || '';
-    result.source = S.pendingImages.length ? 'photo' : 'text';
-    if (text && !result.raw_text) result.raw_text = text;
-    viewEdit(null, result);
+    const records = (result.records || []).map(function (r) {
+      r.memo = S.addHint || '';
+      r.source = S.pendingImages.length ? 'photo' : 'text';
+      if (text && !r.raw_text && result.records.length === 1) r.raw_text = text;
+      return r;
+    });
+    if (!records.length) return showError(new Error('결과를 찾지 못했습니다. 사진을 더 선명하게 찍어주세요.'));
+    if (records.length === 1 && !findDuplicate(records[0])) return viewEdit(null, records[0]);
+    viewReview(records);
   } catch (e) { showError(e); }
 }
 
-function today() {
-  const d = new Date();
+function ymd(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
+/* ---------------- 여러 건 검토 (문자 캡처 등) ---------------- */
+
+/** 날짜 + 검사값이 같은 기록이 이미 있으면 중복으로 본다 */
+function recordFingerprint(d) {
+  const tests = (d.tests || []).map(function (t) { return normName(t.name) + '=' + String(t.value).replace(/\s/g, ''); }).sort().join('|');
+  const body = tests || String(d.next_visit || d.summary || '').replace(/\s/g, '').slice(0, 60);
+  return (d.date || '') + '#' + (d.record_type || '') + '#' + body;
+}
+
+function findDuplicate(d) {
+  const fp = recordFingerprint(d);
+  return S.records.find(function (r) { return recordFingerprint(r.data) === fp; }) || null;
+}
+
+function viewReview(records) {
+  const seen = {};
+  S.review = {
+    items: records.map(function (d) {
+      const fp = recordFingerprint(d);
+      const dup = !!findDuplicate(d) || !!seen[fp];
+      seen[fp] = true;
+      // 이미 있는 기록과 예약·알림 문자는 기본으로 체크 해제
+      return { data: d, dup: dup, checked: !dup && d.record_type !== '문자·알림' };
+    })
+  };
+  renderReview();
+}
+
+function renderReview() {
+  const items = S.review.items;
+  const count = items.filter(function (i) { return i.checked; }).length;
+  const reminders = items.filter(function (i) { return i.data.record_type === '문자·알림'; }).length;
+  render(
+    header('찾은 기록 ' + items.length + '건', true) +
+    '<p class="notice">AI가 날짜별로 나눈 결과입니다. 저장할 기록을 고르세요. 카드를 누르면 내용을 고칠 수 있어요.' +
+    (reminders ? '<br>예약·검진 알림 문자 ' + reminders + '건은 기본으로 빠져 있어요.' : '') + '</p>' +
+    '<div class="row"><button class="grow" id="all">모두 선택</button><button class="grow" id="results">결과만 선택</button></div>' +
+    items.map(function (it, i) {
+      const d = it.data;
+      const tests = (d.tests || []).map(function (t) {
+        return '<span class="flag ' + esc(t.flag || '판정없음') + '" style="display:inline-block;margin:2px">' + esc(shortName(t.name)) + ' ' + esc(t.value) + '</span>';
+      }).join('');
+      return '<div class="card" style="' + (it.checked ? '' : 'opacity:.6') + '">' +
+        '<div class="row"><input type="checkbox" data-chk="' + i + '"' + (it.checked ? ' checked' : '') + '>' +
+        '<span class="tag">' + esc(d.record_type || '기타') + '</span>' +
+        '<span class="muted grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (추정)' : '') + '</span>' +
+        (it.dup ? '<span class="flag 판정없음">이미 있음</span>' : '') + '</div>' +
+        '<div data-open="' + i + '" style="cursor:pointer">' +
+        '<h3>' + esc(d.title || '(제목 없음)') + '</h3>' +
+        (tests ? '<div>' + tests + '</div>' : '') +
+        (d.doctor_opinion || d.summary || d.next_visit ? '<p class="muted">' + esc(d.doctor_opinion || d.next_visit || d.summary) + '</p>' : '') +
+        '</div></div>';
+    }).join('') +
+    '<p class="muted">함께 올린 사진 ' + S.pendingImages.length + '장은 저장하는 기록들에 원본으로 같이 붙습니다.</p>' +
+    '<button class="primary fab" id="saveAll"' + (count ? '' : ' disabled') + '>선택한 ' + count + '건 저장</button>'
+  );
+  bindBack(function () {
+    confirmBox('저장하지 않고 나갈까요?', '나가기').then(function (ok) { if (ok) { S.review = null; renderAdd(); } });
+  });
+  on('[data-chk]', 'change', function () { items[Number(this.getAttribute('data-chk'))].checked = this.checked; renderReview(); });
+  on('[data-open]', 'click', function () {
+    const i = Number(this.getAttribute('data-open'));
+    viewEdit(null, items[i].data, i);
+  });
+  on('#all', 'click', function () { items.forEach(function (i) { i.checked = !i.dup; }); renderReview(); });
+  on('#results', 'click', function () { items.forEach(function (i) { i.checked = !i.dup && i.data.record_type !== '문자·알림'; }); renderReview(); });
+  on('#saveAll', 'click', saveReviewed);
+}
+
+function shortName(name) { return String(name || '').replace(/\(.*?\)/g, '').trim(); }
+
+async function saveReviewed() {
+  const chosen = S.review.items.filter(function (i) { return i.checked; }).map(function (i) { return cleanRecord(i.data); });
+  if (!chosen.length) return;
+  const uploaded = [];
+  try {
+    loading('사진을 암호화해서 올리는 중…');
+    for (const img of S.pendingImages) {
+      const res = await call('api_uploadImage', S.token, await Crypt.encryptBlobB64(S.dek, img.bytes));
+      uploaded.push(res.imageId);
+    }
+    loading(chosen.length + '건을 암호화해서 저장하는 중…');
+    const items = [];
+    for (const d of chosen) items.push({ encData: await Crypt.encryptJson(S.dek, d), imageIds: uploaded });
+    const res = await call('api_saveRecords', S.token, items);
+    const now = new Date().toISOString();
+    res.recordIds.forEach(function (id, i) {
+      S.records.push({ recordId: id, createdAt: now, updatedAt: now, imageIds: uploaded.slice(), data: chosen[i] });
+    });
+    S.records.sort(function (a, b) { return sortKey(b).localeCompare(sortKey(a)); });
+    S.review = null; S.pendingImages = []; S.addText = ''; S.addHint = '';
+    done();
+    toast(chosen.length + '건을 저장했습니다.');
+    viewHome();
+  } catch (e) {
+    if (uploaded.length) call('api_discardImages', S.token, uploaded).catch(function () {});
+    showError(e);
+  }
+}
+
+function cleanRecord(d) {
+  d.tests = (d.tests || []).filter(function (t) { return t.name || t.value; });
+  d.medications = (d.medications || []).filter(function (m) { return m.name; });
+  if (!d.title) d.title = (d.record_type || '기록') + ' ' + (d.date || '');
+  return d;
+}
+
+function today() { return ymd(new Date()); }
+
 /* ---------------- 기록 확인/수정 ---------------- */
 
-function viewEdit(recordId, data) {
+/** reviewIndex 가 있으면 "여러 건 검토" 화면의 한 건을 고치는 모드 (저장은 검토 화면에서 한꺼번에) */
+function viewEdit(recordId, data, reviewIndex) {
   const d = JSON.parse(JSON.stringify(data || {}));
   d.tests = d.tests || []; d.medications = d.medications || [];
   d.diagnoses = d.diagnoses || []; d.follow_up = d.follow_up || [];
-  S.draft = { recordId: recordId, data: d };
+  S.draft = { recordId: recordId, data: d, reviewIndex: reviewIndex === undefined ? null : reviewIndex };
   if (recordId) {
     const rec = S.records.find(function (r) { return r.recordId === recordId; });
     S.keptImageIds = rec ? rec.imageIds.slice() : [];
@@ -509,6 +627,7 @@ function renderEdit() {
     '<details><summary>원문 텍스트</summary><textarea data-bind="raw_text" style="min-height:160px">' + esc(d.raw_text) + '</textarea></details>' +
     '</div>' +
 
+    (S.draft.reviewIndex !== null ? '<p style="margin-top:20px"><button class="primary block" id="save">확인</button></p>' :
     '<h2>사진</h2>' +
     '<div class="thumbs">' +
     S.keptImageIds.map(function (id, i) { return '<div class="t"><div class="btn" style="width:96px;height:96px;display:flex;align-items:center;justify-content:center">📷 ' + (i + 1) + '</div><button class="x" data-kept="' + i + '">✕</button></div>'; }).join('') +
@@ -516,12 +635,13 @@ function renderEdit() {
     '</div>' +
     '<label class="btn block" style="text-align:center">+ 사진 추가<input id="more" type="file" accept="image/*" multiple hidden></label>' +
 
-    '<p style="margin-top:20px"><button class="primary block" id="save">💾 저장하기</button></p>'
+    '<p style="margin-top:20px"><button class="primary block" id="save">💾 저장하기</button></p>')
   );
   bindBack(function () {
     confirmBox('저장하지 않고 나갈까요?', '나가기').then(function (ok) {
       if (!ok) return;
-      if (S.draft.recordId) viewDetail(S.draft.recordId); else renderAdd();
+      if (S.draft.reviewIndex !== null) renderReview();
+      else if (S.draft.recordId) viewDetail(S.draft.recordId); else renderAdd();
     });
   });
   on('[data-addrow]', 'click', function () {
@@ -558,10 +678,12 @@ $app.addEventListener('input', function (e) {
 });
 
 async function saveDraft() {
-  const d = S.draft.data;
-  d.tests = d.tests.filter(function (t) { return t.name || t.value; });
-  d.medications = d.medications.filter(function (m) { return m.name; });
-  if (!d.title) d.title = (d.record_type || '기록') + ' ' + (d.date || '');
+  const d = cleanRecord(S.draft.data);
+  if (S.draft.reviewIndex !== null) {
+    const item = S.review.items[S.draft.reviewIndex];
+    item.data = d; item.checked = true; S.draft = null;
+    return renderReview();
+  }
   const uploaded = [];
   try {
     loading('암호화해서 저장하는 중…');
@@ -602,7 +724,7 @@ function viewDetail(recordId) {
   render(
     header(d.title || '기록', true) +
     '<div class="card">' +
-    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span><span class="muted">' + esc(fmtDate(d.date)) + '</span></div>' +
+    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span><span class="muted">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (날짜 추정)' : '') + '</span></div>' +
     '<p class="muted" style="margin-top:8px">' + esc([d.hospital, d.department, d.doctor && d.doctor + ' 선생님'].filter(Boolean).join(' · ')) + '</p>' +
     (d.summary ? '<h3>요약</h3><p>' + esc(d.summary) + '</p>' : '') +
     ((d.diagnoses || []).length ? '<h3>진단 / 판정</h3><ul>' + d.diagnoses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
@@ -677,7 +799,7 @@ function viewTrend(testName, fromRecordId) {
     });
   });
   points.sort(function (a, b) { return a.date.localeCompare(b.date); });
-  const nums = points.map(function (p) { return parseFloat(String(p.t.value).replace(/[^0-9.\-]/g, '')); });
+  const nums = points.map(function (p) { const v = String(p.t.value).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(v) ? parseFloat(v) : NaN; });
   const numeric = points.length >= 2 && nums.every(function (n) { return !isNaN(n); });
 
   render(
