@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <main id="app"></main>
+  <div id="loading" role="status" aria-live="polite"><div class="spinner"></div><div id="loadingMsg"></div></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <?!= include('Crypto'); ?>
+  <?!= include('App'); ?>
+</body>
+</html>
