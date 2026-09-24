@@ -183,6 +183,43 @@ async function addManualRecord(page, title) {
   check(await dad.evaluate(() => S.records.length === 1 && S.records[0].data.title === '아빠 건강검진'), '아빠: 본인 아이디로 로그인해서 기존 기록 보기');
   check(await dad.evaluate(() => S.people.length === 1), '아빠 화면에는 다른 가족이 안 보임');
 
+  // 8) 부부끼리 서로 보기: 관리자가 장모님(어머니) ↔ 장인어른 연결
+  const fil = await newUserPage(browser);
+  await signupAndLogin(fil, '장인어른', 'fil-pass-321');
+  await addManualRecord(fil, '장인어른 혈압 기록');
+  check(await fil.evaluate(() => S.people.length === 1), '장인어른: 처음엔 본인 기록만');
+  await me.reload(); await login(me, 'admin', 'admin-pass-123');
+  const goFamily = async () => { await me.evaluate(() => viewSettings()); await waitIdle(me); await me.click('#guard'); await waitIdle(me); };
+  const pickFor = async (memberName, pickName) => {
+    await goFamily();
+    const id = await me.evaluate(n => S.people.find(p => p.username === n).ownerId, memberName);
+    await me.click('[data-member="' + id + '"]'); await waitIdle(me);
+    await me.click('[data-pick="' + pickName + '"]'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
+  };
+  await pickFor('어머니', '장인어른');
+  await me.screenshot({ path: OUT + '/admin_member_manage.png' });
+  await pickFor('장인어른', '어머니');
+  await fil.reload(); await login(fil, '장인어른', 'fil-pass-321');
+  check(await fil.evaluate(() => S.people.some(p => p.username === '어머니') && !S.people.some(p => p.username === 'wife')), '장인어른: 장모님(어머니) 기록 보임, 아내 기록은 안 보임');
+  await mom.reload(); await login(mom, '어머니', 'mom-pass-456');
+  check(await mom.evaluate(() => S.people.some(p => p.username === '장인어른')), '장모님(어머니): 장인어른 기록 보임');
+  const filSelf = await fil.evaluate(() => S.people.find(p => p.username === '어머니').perm);
+  check(filSelf === 'read', '부부끼리는 기본 "보기만" 권한');
+  const memberTry = await tryCall(mom, 'api_listGuardians', [await tok(mom), await uid(fil)]);
+  check(memberTry.err && memberTry.err.includes('관리'), '가족(어머니)은 다른 가족 설정을 바꿀 수 없음');
+
+  // 9) 아내를 공동 관리자로 → 가족 전체 + 대신 관리 프로필도 함께 봄
+  gas.ctx.setConfig_('ADMIN_USERNAMES', 'admin,wife');
+  await wife.reload(); await login(wife, 'wife', 'wife-pass-789');
+  await me.reload(); await login(me, 'admin', 'admin-pass-123');
+  await goFamily(); await me.fill('#pname', '할머니'); await me.click('#addP'); await waitIdle(me);
+  await mom.reload(); await login(mom, '어머니', 'mom-pass-456');
+  await fil.reload(); await login(fil, '장인어른', 'fil-pass-321');
+  await wife.reload(); await login(wife, 'wife', 'wife-pass-789');
+  const wifeSees = await wife.evaluate(() => S.people.map(p => p.username));
+  check(['admin', '어머니', '장인어른', '할머니'].every(n => wifeSees.includes(n)), '공동 관리자(아내): 나·어머니·장인어른·할머니(대신 관리) 모두 보임 → ' + wifeSees.join(','));
+  check(await wife.evaluate(() => S.me.isAdmin === true), '아내 로그인 시 관리자 표시');
+
   // 7) 시트에는 평문이 없음
   const allText = JSON.stringify(gas.sheets);
   check(!allText.includes('어머니 혈액검사') && !allText.includes('내 간기능 검사') && !allText.includes('아빠 건강검진'), '시트 어디에도 기록 제목(평문)이 없음');

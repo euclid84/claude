@@ -360,6 +360,38 @@ function adminUsernames_() {
 
 function isAdminUser_(user) { return adminUsernames_().indexOf(String(user.username)) !== -1; }
 
+/** 공개키가 있는 관리자 목록 (except: 제외할 user_id) */
+function adminsWithKeys_(except) {
+  const names = adminUsernames_();
+  return readAll_(SHEETS.USERS)
+    .filter(function (u) { return names.indexOf(String(u.username)) !== -1 && u.public_key && String(u.user_id) !== String(except); })
+    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
+}
+
+/**
+ * 내가 대신 관리하는 가족 프로필 중, 다른(공동) 관리자에게 아직 연결되지 않은 것
+ * → 로그인한 사람이 브라우저에서 프로필 데이터키를 그 관리자 공개키로 암호화해 연결한다.
+ */
+function missingAdminLinksForProfiles_(user) {
+  const admins = adminsWithKeys_(user.user_id);
+  if (!admins.length) return [];
+  const managedIds = readAll_(SHEETS.USERS).filter(isManaged_).map(function (u) { return String(u.user_id); });
+  const shares = readAll_(SHEETS.SHARES);
+  return shares
+    .filter(function (r) {
+      return String(r.guardian_id) === String(user.user_id) && String(r.perm) === 'write' && managedIds.indexOf(String(r.owner_id)) !== -1;
+    })
+    .map(function (r) {
+      return {
+        ownerId: String(r.owner_id),
+        admins: admins.filter(function (a) {
+          return !shares.some(function (x) { return String(x.owner_id) === String(r.owner_id) && String(x.guardian_id) === a.userId; });
+        })
+      };
+    })
+    .filter(function (x) { return x.admins.length; });
+}
+
 /** 이 사용자의 기록이 아직 연결되지 않은 관리자들 (공개키가 있는 관리자만) */
 function missingAdmins_(user) {
   const names = adminUsernames_();
@@ -444,7 +476,8 @@ function api_login(username, authKey) {
     encPrivateKey: user.public_key ? String(user.enc_private_key) : '',
     publicKey: user.public_key ? String(user.public_key) : '',
     isAdmin: isAdminUser_(user),
-    missingAdmins: missingAdmins_(user)
+    missingAdmins: missingAdmins_(user),
+    profileLinks: missingAdminLinksForProfiles_(user)
   };
 }
 
@@ -1038,7 +1071,7 @@ function api_removeShare(token, shareId) {
     const row = findRows_(SHEETS.SHARES, 'share_id', shareId)[0];
     if (!row) return { ok: true };
     const guardianUser = findRows_(SHEETS.USERS, 'user_id', String(row.guardian_id))[0];
-    if (String(row.owner_id) === s.userId && guardianUser && isAdminUser_(guardianUser)) {
+    if (guardianUser && isAdminUser_(guardianUser) && String(row.guardian_id) !== s.userId) {
       throw new Error('관리자와의 연결은 해제할 수 없어요. 가족 건강을 함께 챙기기 위한 기본 설정이에요.');
     }
     const canManage = function () { try { resolveManageable_(s, String(row.owner_id)); return true; } catch (e) { return false; } };
@@ -1062,16 +1095,19 @@ function usernameMap_() {
 function isManaged_(u) { return String(u.managed).toUpperCase() === 'TRUE'; }
 
 /**
- * 보호자 추가/목록을 다룰 대상: 비우면 나, 채우면 "내가 대신 관리하는 가족 프로필"이어야 하고
- * 나에게 그 프로필의 "보기 + 대신 등록" 권한이 있어야 한다.
+ * "함께 보는 사람"을 설정할 대상: 비우면 나.
+ * 다른 사람이면 ① 내가 대신 관리하는 가족 프로필이거나 ② 내가 관리자이고 그 가족과 연결되어 있어야 한다.
+ * (관리자는 부부끼리 서로 보기 같은 가족 간 설정을 대신 해줄 수 있다)
  */
 function resolveManageable_(session, ownerId) {
   if (!ownerId || String(ownerId) === session.userId) return session.userId;
   const u = findRows_(SHEETS.USERS, 'user_id', String(ownerId))[0];
-  if (!u || !isManaged_(u)) throw new Error('본인이 직접 쓰는 가족의 보호자는 그분이 직접 정해야 합니다.');
   const share = findShare_(String(ownerId), session.userId);
-  if (!share || String(share.perm) !== 'write') throw new Error('이 가족 프로필을 관리할 권한이 없습니다.');
-  return String(ownerId);
+  if (!u || !share || String(share.perm) !== 'write') throw new Error('이 가족을 관리할 권한이 없습니다.');
+  if (isManaged_(u)) return String(ownerId);
+  const me = findRows_(SHEETS.USERS, 'user_id', session.userId)[0];
+  if (me && isAdminUser_(me)) return String(ownerId);
+  throw new Error('본인이 직접 쓰는 가족의 설정은 그분이나 관리자만 바꿀 수 있습니다.');
 }
 
 /* ---------------- 내가 대신 관리하는 가족 프로필 ---------------- */
@@ -1096,7 +1132,7 @@ function api_createProfile(token, displayName, encDekForMe) {
       enc_dek: encDekForMe, perm: 'write', created_at: nowIso_()
     });
     audit_(s.userId, 'profile_create', userId);
-    return { ownerId: userId };
+    return { ownerId: userId, admins: adminsWithKeys_(s.userId) }; // 공동 관리자에게도 바로 연결하도록
   });
 }
 

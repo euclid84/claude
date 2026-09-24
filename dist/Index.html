@@ -560,6 +560,7 @@ async function doLogin() {
     await setupKeys(res.encPrivateKey);
     await linkAdmins(res.missingAdmins || []);
     await loadPeople();
+    await linkProfilesToAdmins(res.profileLinks || []);
     await selectPerson(null, true);
     done();
     if (!S.doctor._saved) viewDoctor(true); else viewHome();
@@ -692,6 +693,19 @@ async function linkAdmins(admins) {
       const encDek = await Crypt.encryptForPublicKey(a.publicKey, S.me.dekRaw);
       await call('api_addGuardian', S.token, a.userId, encDek, 'write');
     } catch (e) { console.warn('관리자 연결 실패', a.username, e.message); }
+  }
+}
+
+/** 내가 대신 관리하는 가족 프로필을 공동 관리자에게도 연결 */
+async function linkProfilesToAdmins(links) {
+  for (const l of links) {
+    const p = S.people.find(function (x) { return x.ownerId === l.ownerId; });
+    if (!p || !p.dekRaw) continue;
+    for (const a of l.admins) {
+      try {
+        await call('api_addGuardian', S.token, a.userId, await Crypt.encryptForPublicKey(a.publicKey, p.dekRaw), 'write', l.ownerId);
+      } catch (e) { console.warn('공동 관리자 연결 실패', a.username, e.message); }
+    }
   }
 }
 
@@ -1646,17 +1660,33 @@ async function guardianSection(target, onChange) {
   const html = '<div class="card"><h3>' + (target.ownerId ? esc(nim(target.name)) + ' 기록을 함께 보는 사람' : '내 기록을 함께 보는 사람') + '</h3>' +
     '<p class="muted">여기 추가한 사람만 기록과 상담 내역을 볼 수 있어요.</p>' +
     (others.length ? '<ul class="tests">' + others.map(function (g) {
-      const fixed = g.isAdmin && !target.ownerId;
+      const fixed = g.isAdmin;
       return '<li style="cursor:default"><div class="nm">' + (g.isAdmin ? '👑 ' : '') + esc(g.username) +
         '<small>' + (g.isAdmin ? '관리자 · 가족 건강을 함께 챙겨요' : esc(PERM_LABEL[g.perm] || g.perm)) + '</small></div>' +
         (fixed ? '' : '<button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button>') + '</li>';
     }).join('') + '</ul>' : '<p>아직 없어요.</p>') +
-    '<hr><label for="gname">추가할 가족의 아이디</label><input id="gname" autocapitalize="none" placeholder="예) 아내가 쓰는 아이디">' +
-    '<label>권한</label>' + radioGroup('perm', target.ownerId ? 'write' : 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
+    (function () {
+      if (!S.me.isAdmin) return '';
+      const already = list.map(function (g) { return g.userId; });
+      const cands = S.people.filter(function (p) {
+        return p.ownerId && p.ownerId !== target.ownerId && !p.managed && already.indexOf(p.ownerId) === -1;
+      });
+      if (!cands.length) return '';
+      return '<hr><p><b>가족에게 보여주기</b></p><p class="muted">누르면 그 가족도 ' + esc(target.ownerId ? nim(target.name) + '의' : '내') + ' 기록을 볼 수 있어요. (예: 부부끼리 서로 보기)</p>' +
+        '<div class="chips">' + cands.map(function (p) {
+          return '<button class="chip" data-pick="' + esc(p.username) + '">➕ ' + esc(p.username) + '</button>';
+        }).join('') + '</div>';
+    })() +
+    '<hr><label for="gname">' + (S.me.isAdmin ? '또는 아이디로 추가' : '추가할 가족의 아이디') + '</label><input id="gname" autocapitalize="none" placeholder="예) 아내가 쓰는 아이디">' +
+    '<label>권한</label>' + radioGroup('perm', target.managed ? 'write' : 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
     '<p style="margin-top:12px"><button class="primary block" id="addG">함께 보기 추가</button></p>' +
     '<p class="muted">추가할 가족이 먼저 가입해서 한 번 로그인해 있어야 해요.</p></div>';
 
   function bind() {
+    on('[data-pick]', 'click', function () {
+      $('#gname').value = this.getAttribute('data-pick');
+      $('#addG').click();
+    });
     on('#addG', 'click', async function () {
       const name = val('#gname');
       const perm = ($('input[name="perm"]:checked') || {}).value || 'read';
@@ -1706,7 +1736,7 @@ async function viewGuardians() {
       return '<li style="cursor:default"><div class="nm">' + esc(p.username) + '<small>' + esc(badge) + '</small></div>' +
         (p.managed && p.perm === 'write'
           ? '<button class="soft" data-manage="' + esc(p.ownerId) + '">관리</button>'
-          : (S.me.isAdmin ? '<button class="soft" data-open="' + esc(p.ownerId) + '">보기</button>'
+          : (S.me.isAdmin && p.perm === 'write' ? '<button class="soft" data-member="' + esc(p.ownerId) + '">관리</button>'
             : '<button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button>')) + '</li>';
     }).join('') + '</ul>' : (admin ? '<p class="muted">아직 없어요. 가족이 가입하거나 위에서 추가하면 여기 나타나요.</p>' : '')) +
     (admin || others.length ? '</div>' : '') +
@@ -1726,6 +1756,7 @@ async function viewGuardians() {
       const dekRaw = Crypt.newDekRaw();
       const res = await call('api_createProfile', S.token, name, await Crypt.encryptForPublicKey(S.me.publicKey, dekRaw));
       await loadPeople();
+      await linkProfilesToAdmins([{ ownerId: res.ownerId, admins: res.admins || [] }]);
       await selectPerson(res.ownerId, true);
       done();
       toast(nim(name) + ' 프로필을 만들었어요. 결과지를 올려 보세요.');
@@ -1733,7 +1764,7 @@ async function viewGuardians() {
     } catch (e) { showError(e); }
   });
   on('[data-manage]', 'click', function () { viewProfileManage(this.getAttribute('data-manage')).catch(showError); });
-  on('[data-open]', 'click', function () { selectPerson(this.getAttribute('data-open')).catch(showError); });
+  on('[data-member]', 'click', function () { viewMemberManage(this.getAttribute('data-member')).catch(showError); });
   on('[data-leave]', 'click', async function () {
     const id = this.getAttribute('data-leave'), name = this.getAttribute('data-name');
     if (!(await confirmBox(nim(name) + '의 기록을 더 이상 보지 않을까요? (다시 보려면 ' + josa(nim(name), '이', '가') + ' 다시 추가해야 해요)', '그만 보기'))) return;
@@ -1746,6 +1777,23 @@ async function viewGuardians() {
       await viewGuardians();
     } catch (e) { showError(e); }
   });
+}
+
+/** 관리자: 직접 쓰는 가족의 "함께 보는 사람" 설정 (예: 장모님 ↔ 장인어른) */
+async function viewMemberManage(ownerId) {
+  const p = S.people.find(function (x) { return x.ownerId === ownerId; });
+  if (!p) return viewGuardians();
+  loading();
+  const g = await guardianSection({ ownerId: ownerId, name: p.username, dekRaw: p.dekRaw }, function () { return viewMemberManage(ownerId); });
+  done();
+  render(
+    header(nim(p.username) + ' 관리', true) +
+    '<button class="primary block" id="openRec" style="margin:6px 0 4px">📂 ' + esc(nim(p.username)) + ' 기록 보기</button>' +
+    g.html
+  );
+  bindBack(viewGuardians);
+  g.bind();
+  on('#openRec', 'click', function () { selectPerson(ownerId).catch(showError); });
 }
 
 /** 관리자: 가족 모두의 최근 기록과 확인할 항목을 한 화면에서 점검 */
@@ -1787,10 +1835,11 @@ async function viewProfileManage(ownerId) {
   const p = S.people.find(function (x) { return x.ownerId === ownerId; });
   if (!p) return viewGuardians();
   loading();
-  const g = await guardianSection({ ownerId: ownerId, name: p.username, dekRaw: p.dekRaw }, function () { return viewProfileManage(ownerId); });
+  const g = await guardianSection({ ownerId: ownerId, name: p.username, dekRaw: p.dekRaw, managed: true }, function () { return viewProfileManage(ownerId); });
   done();
   render(
     header(nim(p.username) + ' 관리', true) +
+    '<button class="primary block" id="openRec" style="margin:6px 0 4px">📂 ' + esc(nim(p.username)) + ' 기록 보기</button>' +
     '<div class="card"><h3>이름(호칭)</h3><div class="row"><input id="rname" class="grow" style="flex:1" maxlength="20" value="' + esc(p.username) + '">' +
     '<button id="rename">바꾸기</button></div></div>' +
     g.html +
@@ -1804,6 +1853,7 @@ async function viewProfileManage(ownerId) {
   );
   bindBack(viewGuardians);
   g.bind();
+  on('#openRec', 'click', function () { selectPerson(ownerId).catch(showError); });
   on('#rename', 'click', async function () {
     const name = val('#rname');
     try {
