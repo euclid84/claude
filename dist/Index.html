@@ -3,135 +3,222 @@
 <head>
   <base target="_top">
   <meta charset="utf-8">
-  <style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  /* =====================================================================
+   *  디자인 원칙 (어르신 기준)
+   *  - 기본 글씨 19px (보통 앱의 1.2배), 크게 22px / 아주 크게 25px
+   *  - 글자와 배경 대비 7:1 이상(본문), 버튼·상태표시 4.5:1 이상
+   *  - 누르는 곳은 최소 56px 높이, 한 줄에 버튼 1~2개
+   *  - 상태는 색 + 기호 + 글자로 함께 표시 (▲ 높음 / ✓ 정상)
+   *  - 따뜻한 아이보리 배경 + 차분한 청록색 (병원 느낌은 살리되 차갑지 않게)
+   * ===================================================================== */
   :root {
-    --bg: #f5f7fa;
-    --card: #ffffff;
-    --text: #1d2433;
-    --muted: #5b6475;
-    --line: #dde2ea;
-    --primary: #1f6feb;
-    --primary-soft: #e6efff;
-    --danger: #d1242f;
-    --danger-soft: #ffebe9;
-    --warn: #b35900;
-    --warn-soft: #fff4e5;
-    --ok: #1a7f37;
-    --ok-soft: #e6f6ea;
-    --radius: 14px;
-    --fs: 17px;
+    --bg: #F7F4EE;
+    --card: #FFFFFF;
+    --ink: #1B1F24;
+    --ink-2: #454C58;
+    --line: #E4DED3;
+    --primary: #0E6B64;
+    --primary-dark: #0A524D;
+    --primary-soft: #E3F1EF;
+    --good: #17693A;   --good-bg: #E6F4EA;
+    --warn: #7A4B00;   --warn-bg: #FFF1D0;
+    --bad: #A61B1B;    --bad-bg: #FDE8E6;
+    --none: #3F4652;   --none-bg: #ECEEF1;
+    --note: #5B3A00;   --note-bg: #FFF4DC;  --note-line: #EFD49A;
+    --radius: 20px;
+    --shadow: 0 1px 2px rgba(40, 30, 10, .05), 0 4px 14px rgba(40, 30, 10, .06);
+    --fs: 19px;
   }
-  body.large { --fs: 21px; }
+  body.size-l { --fs: 22px; }
+  body.size-xl { --fs: 25px; }
+
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
     font-size: var(--fs);
-    line-height: 1.55;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    word-break: keep-all;          /* 한글 단어 중간에서 줄바꿈하지 않기 */
+    overflow-wrap: anywhere;
     background: var(--bg);
-    color: var(--text);
+    color: var(--ink);
     -webkit-text-size-adjust: 100%;
   }
-  #app { max-width: 720px; margin: 0 auto; padding: 0 16px 96px; }
+  #app { max-width: 680px; margin: 0 auto; padding: 0 16px 120px; }
+
+  /* ---------- 머리글 ---------- */
   header.bar {
     position: sticky; top: 0; z-index: 5;
-    display: flex; align-items: center; gap: 8px;
-    background: var(--bg); padding: 14px 0 10px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(247, 244, 238, .96); backdrop-filter: blur(6px);
+    padding: 12px 0 10px; margin-bottom: 4px;
   }
-  header.bar h1 { font-size: 1.2em; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  h2 { font-size: 1.1em; margin: 20px 0 8px; }
-  h3 { font-size: 1em; margin: 14px 0 6px; }
+  header.bar h1 { font-size: 1.15em; font-weight: 800; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  h2 { font-size: 1.1em; font-weight: 800; margin: 26px 0 10px; }
+  h3 { font-size: 1.02em; font-weight: 800; margin: 0 0 8px; }
   p { margin: 6px 0; }
-  .muted { color: var(--muted); font-size: 0.9em; }
+  .muted { color: var(--ink-2); font-size: 0.9em; }
+  b, strong { font-weight: 800; }
+
+  /* ---------- 카드 ---------- */
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 16px; margin: 12px 0;
+    padding: 18px; margin: 14px 0; box-shadow: var(--shadow);
   }
-  .card.click { cursor: pointer; }
-  .card.click:active { background: #f0f3f8; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .card.click { cursor: pointer; transition: transform .08s; }
+  .card.click:active { transform: scale(.985); background: #FBFAF7; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; }
-  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .stack { display: flex; flex-direction: column; gap: 10px; }
   .stack > .btn, .stack > button { width: 100%; }
+
+  /* ---------- 버튼 ---------- */
   button, .btn {
-    font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
-    border-radius: 12px; padding: 12px 16px; min-height: 48px; cursor: pointer;
+    font: inherit; font-weight: 700; color: var(--ink);
+    border: 1.5px solid var(--line); background: var(--card);
+    border-radius: 16px; padding: 12px 18px; min-height: 56px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-align: center;
   }
-  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
-  button.danger { color: var(--danger); border-color: var(--danger); }
+  button:active, .btn:active { transform: scale(.98); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: 0 4px 12px rgba(14, 107, 100, .25); }
+  button.primary:active { background: var(--primary-dark); }
+  button.danger { color: var(--bad); border-color: #E8B4AE; background: #fff; }
   button.block { width: 100%; }
-  button.icon { min-width: 48px; padding: 8px 12px; }
-  button:disabled { opacity: 0.5; }
-  label { display: block; font-weight: 600; margin: 14px 0 6px; }
+  button.icon { min-width: 56px; padding: 8px 12px; }
+  button:disabled { opacity: 0.45; }
+  button.link { border: none; background: none; box-shadow: none; color: var(--primary); padding: 4px 6px; min-height: 40px; font-size: 0.95em; text-decoration: underline; }
+  button.soft { background: var(--primary-soft); border-color: transparent; color: var(--primary-dark); }
+
+  /* ---------- 입력칸 ---------- */
+  label { display: block; font-weight: 800; margin: 18px 0 8px; }
   input, select, textarea {
-    font: inherit; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
-    background: #fff; color: var(--text);
+    font: inherit; width: 100%; padding: 14px 16px; border: 1.5px solid #CFC8BB; border-radius: 14px;
+    background: #fff; color: var(--ink); min-height: 56px;
   }
-  textarea { min-height: 110px; resize: vertical; }
-  input[type=checkbox], input[type=radio] { width: auto; flex-shrink: 0; transform: scale(1.4); margin: 0 12px 0 4px; }
-  .check { display: flex; align-items: center; font-weight: normal; }
-  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; }
+  input:focus, select:focus, textarea:focus { outline: 3px solid rgba(14, 107, 100, .25); border-color: var(--primary); }
+  input::placeholder, textarea::placeholder { color: #6B7280; }
+  textarea { min-height: 120px; resize: vertical; }
+  input[type=checkbox], input[type=radio] { width: auto; min-height: 0; flex-shrink: 0; transform: scale(1.5); margin: 0 14px 0 6px; accent-color: var(--primary); }
+  .check { display: flex; align-items: center; font-weight: 600; min-height: 48px; margin: 6px 0; }
+
+  /* ---------- 칩(분류 버튼) ---------- */
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 0 8px; }
   .chip {
-    white-space: nowrap; border-radius: 999px; padding: 6px 14px; min-height: 40px;
-    border: 1px solid var(--line); background: #fff; font-size: 0.9em;
+    white-space: nowrap; border-radius: 999px; padding: 8px 18px; min-height: 48px;
+    border: 1.5px solid var(--line); background: #fff; font-size: 0.92em; font-weight: 700;
   }
-  .chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .tag { display: inline-block; font-size: 0.78em; padding: 2px 10px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); }
-  .flag { font-size: 0.8em; font-weight: 700; padding: 2px 8px; border-radius: 8px; white-space: nowrap; }
-  .flag.정상 { background: var(--ok-soft); color: var(--ok); }
-  .flag.높음, .flag.낮음, .flag.이상 { background: var(--danger-soft); color: var(--danger); }
-  .flag.경계 { background: var(--warn-soft); color: var(--warn); }
-  .flag.판정없음 { background: #eef0f3; color: var(--muted); }
-  table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
-  .fab {
-    position: fixed; right: 20px; bottom: 24px; z-index: 6;
-    border-radius: 999px; padding: 16px 22px; box-shadow: 0 6px 18px rgba(0,0,0,.18);
+  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .tag { display: inline-block; font-size: 0.8em; font-weight: 800; padding: 3px 12px; border-radius: 999px; background: var(--primary-soft); color: var(--primary-dark); }
+
+  /* ---------- 상태 표시 (색 + 기호 + 글자) ---------- */
+  .flag { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82em; font-weight: 800; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .flag.정상 { background: var(--good-bg); color: var(--good); }
+  .flag.높음, .flag.낮음, .flag.이상 { background: var(--bad-bg); color: var(--bad); }
+  .flag.경계 { background: var(--warn-bg); color: var(--warn); }
+  .flag.판정없음 { background: var(--none-bg); color: var(--none); }
+
+  /* ---------- 홈: 인사 카드 ---------- */
+  .hero {
+    background: linear-gradient(135deg, #0E6B64 0%, #13847B 100%); color: #fff;
+    border-radius: 24px; padding: 22px 20px; margin: 10px 0 16px; box-shadow: 0 8px 22px rgba(14, 107, 100, .28);
   }
-  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .hero .hello { font-size: 1.35em; font-weight: 800; line-height: 1.35; margin: 0 0 6px; }
+  .hero .sub { font-size: 0.95em; opacity: .95; margin: 0 0 16px; }
+  .hero .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hero .actions.one { grid-template-columns: 1fr; }
+  .hero button { background: #fff; color: var(--primary-dark); border: none; min-height: 64px; font-size: 1em; flex-direction: column; gap: 2px; line-height: 1.25; }
+  .hero button .ico { font-size: 1.3em; }
+
+  /* ---------- 기록 카드 ---------- */
+  .rec { position: relative; padding-left: 22px; }
+  .rec::before { content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 6px; border-radius: 0 6px 6px 0; background: var(--primary); }
+  .rec.alert::before { background: #C0392B; }
+  .rec .date { font-size: 1.05em; font-weight: 800; }
+  .rec .title { font-size: 1.08em; font-weight: 800; margin: 6px 0 2px; }
+  .rec .where { color: var(--ink-2); font-size: 0.9em; }
+  .rec .summary { margin-top: 8px; color: var(--ink); }
+
+  /* ---------- 검사 수치 목록 (표 대신 한 줄씩 크게) ---------- */
+  .tests { margin: 0; padding: 0; list-style: none; }
+  .tests li { display: flex; align-items: center; gap: 12px; padding: 14px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .tests li:last-child { border-bottom: none; }
+  .tests .nm { flex: 1; font-weight: 700; }
+  .tests .nm small { display: block; font-weight: 500; color: var(--ink-2); font-size: 0.8em; }
+  .tests .val { text-align: right; font-weight: 800; font-size: 1.1em; white-space: nowrap; }
+  .tests .val small { font-weight: 600; font-size: 0.72em; color: var(--ink-2); margin-left: 2px; }
+  .tests .go { color: #9AA1AB; font-size: 1.1em; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.95em; }
+  th, td { text-align: left; padding: 12px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--ink-2); font-weight: 700; font-size: 0.85em; white-space: nowrap; }
+
+  /* ---------- 사진 ---------- */
+  .thumbs { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
   .thumbs .t { position: relative; }
-  .thumbs img { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
-  .thumbs .x { position: absolute; top: -8px; right: -8px; min-height: 32px; min-width: 32px; padding: 0; border-radius: 999px; }
-  .photo-full { width: 100%; border-radius: 10px; border: 1px solid var(--line); margin: 6px 0; }
-  .chat { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 140px; }
-  .msg { padding: 12px 14px; border-radius: 16px; max-width: 88%; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
-  .msg.model { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-  .msg.family { align-self: flex-start; background: #fff8e6; border: 1px solid #f0d58a; border-bottom-left-radius: 4px; }
-  .msg-label { font-size: 0.78em; color: var(--muted); margin: 4px 4px -6px; }
-  .msg-label.right { text-align: right; }
-  .msg-act { font-size: 0.85em; color: var(--ok); margin: -4px 4px 4px; }
-  button.link { border: none; background: none; color: var(--primary); padding: 4px 6px; min-height: 36px; font-size: 1em; text-decoration: underline; }
-  .family-card { background: #fff8e6; border-color: #f0d58a; }
+  .thumbs img { width: 104px; height: 104px; object-fit: cover; border-radius: 14px; border: 1px solid var(--line); }
+  .thumbs .x { position: absolute; top: -10px; right: -10px; min-height: 40px; min-width: 40px; padding: 0; border-radius: 999px; background: #fff; }
+  .photo-full { width: 100%; border-radius: 14px; border: 1px solid var(--line); margin: 8px 0; }
+
+  /* ---------- 상담 ---------- */
+  .chat { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 150px; }
+  .msg { padding: 14px 16px; border-radius: 20px; max-width: 90%; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; font-size: 1.02em; line-height: 1.65; }
+  .msg.user { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 6px; }
+  .msg.model { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 6px; box-shadow: var(--shadow); }
+  .msg.family { align-self: flex-start; background: var(--note-bg); border: 1.5px solid var(--note-line); color: var(--ink); border-bottom-left-radius: 6px; }
+  .msg-label { font-size: 0.82em; font-weight: 700; color: var(--note); margin: 4px 6px -6px; }
+  .msg-label.right { text-align: right; color: var(--ink-2); }
+  .msg-act { font-size: 0.9em; font-weight: 700; color: var(--good); margin: -4px 6px 4px; display: flex; align-items: center; }
   .composer {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--bg);
-    border-top: 1px solid var(--line); padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: rgba(247, 244, 238, .97);
+    border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
   }
-  .composer .inner { max-width: 720px; margin: 0 auto; display: flex; gap: 8px; }
-  .composer textarea { min-height: 52px; height: 52px; }
-  .composer button { white-space: nowrap; flex-shrink: 0; }
-  .notice { background: var(--warn-soft); color: #6b3a00; border-radius: 10px; padding: 10px 12px; font-size: 0.9em; }
-  .error { background: var(--danger-soft); color: var(--danger); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-  .code { font-family: ui-monospace, Menlo, monospace; font-size: 1.15em; letter-spacing: 1px; background: #fff; border: 2px dashed var(--primary); padding: 14px; border-radius: 10px; text-align: center; word-break: break-all; }
+  .composer .inner { max-width: 680px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+  .composer textarea { min-height: 60px; height: 60px; }
+  .composer button { white-space: nowrap; flex-shrink: 0; min-height: 60px; }
+
+  /* ---------- 안내 상자 ---------- */
+  .notice { background: var(--note-bg); color: var(--note); border: 1px solid var(--note-line); border-radius: 16px; padding: 12px 16px; font-size: 0.92em; }
+  .error { background: var(--bad-bg); color: var(--bad); border-radius: 16px; padding: 12px 16px; margin: 10px 0; font-weight: 700; }
+  .family-card { background: var(--note-bg); border-color: var(--note-line); }
+  .code { font-family: ui-monospace, Menlo, monospace; font-size: 1.2em; letter-spacing: 1px; background: #fff; border: 2px dashed var(--primary); padding: 16px; border-radius: 14px; text-align: center; word-break: break-all; }
+
+  /* ---------- 로그인 첫 화면 ---------- */
+  .welcome { text-align: center; padding: 34px 8px 10px; }
+  .welcome .logo { width: 96px; height: 96px; margin: 0 auto 16px; border-radius: 28px; display: flex; align-items: center; justify-content: center; font-size: 52px;
+    background: linear-gradient(135deg, #0E6B64, #13847B); box-shadow: 0 10px 24px rgba(14, 107, 100, .3); }
+  .welcome h1 { font-size: 1.5em; font-weight: 800; margin: 0 0 6px; }
+  .welcome p { color: var(--ink-2); margin: 0; }
+
+  /* ---------- 글씨 크기 선택 ---------- */
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .seg button { min-height: 60px; }
+  .seg button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+  /* ---------- 로딩 / 알림 ---------- */
   #loading {
-    position: fixed; inset: 0; background: rgba(255,255,255,.75); z-index: 50;
-    display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+    position: fixed; inset: 0; background: rgba(247, 244, 238, .85); z-index: 50;
+    display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+    font-weight: 700; text-align: center; padding: 24px;
   }
   #loading.on { display: flex; }
-  .spinner { width: 44px; height: 44px; border: 5px solid var(--primary-soft); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
+  .spinner { width: 52px; height: 52px; border: 6px solid var(--primary-soft); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #toast {
-    position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%); z-index: 60;
-    background: #1d2433; color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 0.9em;
-    opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%;
+    position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); z-index: 60;
+    background: var(--ink); color: #fff; padding: 14px 22px; border-radius: 999px; font-weight: 700;
+    opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%; text-align: center;
   }
   #toast.on { opacity: 1; }
-  .item-edit { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0; background: #fafbfc; }
-  .item-edit .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .item-edit input, .item-edit select { padding: 8px; }
-  hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
-  details summary { cursor: pointer; font-weight: 600; min-height: 40px; display: flex; align-items: center; }
+
+  .item-edit { border: 1px solid var(--line); border-radius: 16px; padding: 12px; margin: 10px 0; background: #FBFAF7; }
+  .item-edit .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .item-edit input, .item-edit select { padding: 10px 12px; min-height: 52px; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
+  details summary { cursor: pointer; font-weight: 800; min-height: 48px; display: flex; align-items: center; }
+  svg text { font-family: inherit; }
 </style>
 </head>
 <body>
@@ -385,8 +472,26 @@ function viewingOther() { return !!S.ownerId; }
 function storageGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 무시 */ } }
 
+const FONT_SIZES = [['m', '보통'], ['l', '크게'], ['xl', '아주 크게']];
+function fontSize() { return storageGet('fontSize') || (storageGet('fontLarge') === '1' ? 'l' : 'm'); }
 function applyFontSize() {
-  document.body.classList.toggle('large', storageGet('fontLarge') === '1');
+  const f = fontSize();
+  document.body.classList.toggle('size-l', f === 'l');
+  document.body.classList.toggle('size-xl', f === 'xl');
+}
+/** 머리글의 "가" 버튼: 보통 → 크게 → 아주 크게 → 보통 */
+function cycleFontSize() {
+  const order = FONT_SIZES.map(function (x) { return x[0]; });
+  const next = order[(order.indexOf(fontSize()) + 1) % order.length];
+  storageSet('fontSize', next); applyFontSize();
+  toast('글씨 크기: ' + FONT_SIZES.find(function (x) { return x[0] === next; })[1]);
+}
+
+/** 상태 표시: 색 + 기호 + 글자 (색만으로 구분하지 않음) */
+const FLAG_ICON = { '정상': '✓', '높음': '▲', '낮음': '▼', '경계': '!', '이상': '!', '판정없음': '–' };
+function flagHtml(flag, text) {
+  flag = flag || '판정없음';
+  return '<span class="flag ' + esc(flag) + '"><span aria-hidden="true">' + (FLAG_ICON[flag] || '') + '</span>' + esc(text || flag) + '</span>';
 }
 
 function fmtDate(d) {
@@ -412,7 +517,8 @@ function render(html) { $app.innerHTML = html; window.scrollTo(0, 0); }
 
 function viewLogin(message) {
   render(
-    '<header class="bar"><h1>🩺 우리가족 진료기록</h1></header>' +
+    '<div class="welcome"><div class="logo" aria-hidden="true">🩺</div><h1>우리가족 진료기록</h1>' +
+    '<p>결과지를 올리면 AI 선생님이<br>쉽게 설명해 드려요</p></div>' +
     (message ? '<div class="notice">' + esc(message) + '</div>' : '') +
     '<div id="err" class="error" style="display:none"></div>' +
     '<div class="card">' +
@@ -617,45 +723,62 @@ async function loadAll() {
 /* ---------------- 홈 (기록 목록) ---------------- */
 
 function viewHome() {
-  const filters = ['전체'].concat(RECORD_TYPES);
   const q = S.search.toLowerCase();
+  const types = RECORD_TYPES.filter(function (t) { return S.records.some(function (r) { return r.data.record_type === t; }); });
+  if (S.filter !== '전체' && types.indexOf(S.filter) === -1) S.filter = '전체';
   const list = S.records.filter(function (r) {
     if (S.filter !== '전체' && r.data.record_type !== S.filter) return false;
     if (!q) return true;
     return JSON.stringify([r.data.title, r.data.hospital, r.data.department, r.data.diagnoses, r.data.summary, r.data.memo]).toLowerCase().indexOf(q) >= 0;
   });
 
+  // 인사 카드: 호칭(의사 선생님 설정의 "저를 이렇게 불러주세요")이 있으면 그걸로 부른다
+  const call = (S.doctor && S.doctor.patientCall) || nim(S.viewName);
+  const latest = S.records[0];
+  const latestAlerts = latest ? (latest.data.tests || []).filter(isAbnormal).length : 0;
+  const heroTitle = viewingOther() ? esc(nim(S.viewName)) + '의 건강 기록' : '안녕하세요,<br>' + esc(call) + ' 😊';
+  const heroSub = latest
+    ? '최근 기록 · ' + esc(fmtDate(latest.data.date)) + ' ' + esc(latest.data.title || '') + (latestAlerts ? ' · 확인할 항목 ' + latestAlerts + '개' : '')
+    : (canWrite() ? '결과지를 올리면 AI 선생님이 쉽게 설명해 드려요.' : '아직 등록된 기록이 없어요.');
+  const actions = [];
+  if (canWrite()) actions.push('<button id="add"><span class="ico">📷</span>결과지 올리기</button>');
+  if (S.records.length) actions.push('<button id="askAll"><span class="ico">💬</span>선생님께 묻기</button>');
+
   render(
-    header((viewingOther() ? '👪 ' : '🩺 ') + nim(S.viewName) + '의 진료기록', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
+    header(viewingOther() ? '👪 가족 기록' : '🩺 진료기록', false,
+      '<button class="icon" id="font" aria-label="글씨 크기">가</button><button class="icon" id="settings" aria-label="설정">⚙️</button>') +
     (S.people.length > 1 ? '<div class="chips">' + S.people.map(function (p, i) {
       return '<button class="chip' + (p.ownerId === S.ownerId ? ' on' : '') + '" data-p="' + i + '">' +
         (p.ownerId ? '👤 ' + esc(p.username) : '🙋 나') + '</button>';
     }).join('') + '</div>' : '') +
     (viewingOther() ? '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
       (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>' : '') +
-    '<div class="row"><input id="search" placeholder="검색 (병원, 진단명, 메모…)" value="' + esc(S.search) + '"></div>' +
-    '<div class="chips">' + filters.map(function (f) {
-      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
-    }).join('') + '</div>' +
+    '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
+    (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
       const seen = storageGet(notesSeenKey()) || '';
+      const total = S.familyNotes.filter(function (m) { return m.role === 'model'; }).length;
       const fresh = S.familyNotes.filter(function (m) { return m.role === 'model' && m.createdAt > seen; }).length;
-      return '<div class="card click family-card" id="notes"><b>👪 가족이 보내준 설명 ' + S.familyNotes.filter(function (m) { return m.role === 'model'; }).length + '건</b>' +
-        (fresh ? ' <span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '</div>';
+      return '<div class="card click family-card" id="notes"><div class="row"><b class="grow">👪 가족이 보내준 설명 ' + total + '건</b>' +
+        (fresh ? '<span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '<span aria-hidden="true">›</span></div></div>';
     })() : '') +
-    (S.records.length ? '<button class="block" id="askAll">💬 전체 기록으로 의사 선생님께 질문하기</button>' : '') +
+    (S.records.length ? '<h2>기록 ' + S.records.length + '건</h2>' : '') +
+    (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
+      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
+    }).join('') + '</div>' : '') +
+    (S.records.length >= 6 ? '<input id="search" placeholder="🔍 병원, 진단명, 메모로 찾기" value="' + esc(S.search) + '">' : '') +
     (list.length ? list.map(recordCard).join('') :
-      '<div class="card"><p>아직 등록된 기록이 없어요.</p>' + (canWrite() ? '<p class="muted">아래 <b>+ 결과지 등록</b> 버튼을 눌러 결과지 사진을 찍거나, 병원에서 받은 문자를 붙여넣어 보세요.</p>' : '') + '</div>') +
-    (canWrite() ? '<button class="primary fab" id="add">+ 결과지 등록</button>' : '')
+      (S.records.length ? '<div class="card"><p>찾는 기록이 없어요.</p></div>' : ''))
   );
+  on('#font', 'click', cycleFontSize);
   on('#settings', 'click', viewSettings);
+  on('#add', 'click', viewAdd);
+  on('#askAll', 'click', function () { viewChat('ALL'); });
+  on('#notes', 'click', viewFamilyNotes);
   on('.chip[data-p]', 'click', function () {
     const p = S.people[Number(this.getAttribute('data-p'))];
     if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
   });
-  on('#add', 'click', viewAdd);
-  on('#askAll', 'click', function () { viewChat('ALL'); });
-  on('#notes', 'click', viewFamilyNotes);
   on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
   on('#search', 'change', function () { S.search = this.value.trim(); viewHome(); });
   on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id')); });
@@ -663,15 +786,18 @@ function viewHome() {
 
 function recordCard(r) {
   const d = r.data;
-  const abnormal = (d.tests || []).filter(isAbnormal).length;
-  return '<div class="card click" data-id="' + esc(r.recordId) + '">' +
-    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span>' +
-    '<span class="muted grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (추정)' : '') + '</span>' +
-    (abnormal ? '<span class="flag 높음">확인 필요 ' + abnormal + '</span>' : '') +
-    (r.imageIds.length ? '<span class="muted">📷' + r.imageIds.length + '</span>' : '') + '</div>' +
-    '<h3>' + esc(d.title || '(제목 없음)') + '</h3>' +
-    '<p class="muted">' + esc([d.hospital, d.department].filter(Boolean).join(' · ')) + '</p>' +
-    (d.summary ? '<p>' + esc(d.summary.length > 90 ? d.summary.slice(0, 90) + '…' : d.summary) + '</p>' : '') +
+  const tests = d.tests || [];
+  const abnormal = tests.filter(isAbnormal);
+  const serious = abnormal.some(function (t) { return t.flag !== '경계'; });
+  const status = abnormal.length ? flagHtml(serious ? '높음' : '경계', '확인할 항목 ' + abnormal.length + '개')
+    : (tests.length ? flagHtml('정상', '모두 정상') : '');
+  return '<div class="card click rec' + (abnormal.length ? ' alert' : '') + '" data-id="' + esc(r.recordId) + '">' +
+    '<div class="row"><span class="date grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' <span class="muted">(추정)</span>' : '') + '</span>' +
+    '<span class="tag">' + esc(d.record_type || '기타') + '</span></div>' +
+    '<div class="title">' + esc(d.title || '(제목 없음)') + '</div>' +
+    '<div class="where">' + esc([d.hospital, d.department].filter(Boolean).join(' · ')) + (r.imageIds.length ? ' · 📎 원본 ' + r.imageIds.length : '') + '</div>' +
+    (status ? '<div style="margin-top:10px">' + status + '</div>' : '') +
+    (d.summary ? '<div class="summary">' + esc(d.summary.length > 70 ? d.summary.slice(0, 70) + '…' : d.summary) + '</div>' : '') +
     '</div>';
 }
 
@@ -881,7 +1007,7 @@ function renderReview() {
     items.map(function (it, i) {
       const d = it.data;
       const tests = (d.tests || []).map(function (t) {
-        return '<span class="flag ' + esc(t.flag || '판정없음') + '" style="display:inline-block;margin:2px">' + esc(shortName(t.name)) + ' ' + esc(t.value) + '</span>';
+        return '<span style="display:inline-block;margin:3px 4px 3px 0">' + flagHtml(t.flag, shortName(t.name) + ' ' + t.value) + '</span>';
       }).join('');
       return '<div class="card" style="' + (it.checked ? '' : 'opacity:.6') + '">' +
         '<div class="row"><input type="checkbox" data-chk="' + i + '"' + (it.checked ? ' checked' : '') + '>' +
@@ -1119,7 +1245,8 @@ function viewDetail(recordId) {
   render(
     header(d.title || '기록', true) +
     '<div class="card">' +
-    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span><span class="muted">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (날짜 추정)' : '') + '</span></div>' +
+    '<div class="row"><span class="grow" style="font-size:1.25em;font-weight:800">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' <span class="muted">(날짜 추정)</span>' : '') + '</span>' +
+    '<span class="tag">' + esc(d.record_type || '기타') + '</span></div>' +
     '<p class="muted" style="margin-top:8px">' + esc([d.hospital, d.department, d.doctor && d.doctor + ' 선생님'].filter(Boolean).join(' · ')) + '</p>' +
     (d.summary ? '<h3>요약</h3><p>' + esc(d.summary) + '</p>' : '') +
     ((d.diagnoses || []).length ? '<h3>진단 / 판정</h3><ul>' + d.diagnoses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
@@ -1148,7 +1275,7 @@ function viewDetail(recordId) {
   bindBack(viewHome);
   on('#ask', 'click', function () { viewChat(recordId); });
   on('#edit', 'click', function () { viewEdit(recordId, d); });
-  on('tr[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), recordId); });
+  on('[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), recordId); });
   on('#loadPhotos', 'click', async function () {
     try {
       loading('원본을 불러오는 중…');
@@ -1181,11 +1308,12 @@ function viewDetail(recordId) {
 }
 
 function testTable(tests) {
-  return '<table><tr><th>항목</th><th>결과</th><th>참고치</th><th></th></tr>' + tests.map(function (t) {
-    return '<tr data-test="' + esc(t.name) + '" style="cursor:pointer"><td>' + esc(t.name) + (t.note ? '<div class="muted">' + esc(t.note) + '</div>' : '') + '</td>' +
-      '<td><b>' + esc(t.value) + '</b> ' + esc(t.unit) + '</td><td class="muted">' + esc(t.reference_range) + '</td>' +
-      '<td><span class="flag ' + esc(t.flag || '판정없음') + '">' + esc(t.flag || '-') + '</span></td></tr>';
-  }).join('') + '</table>';
+  return '<ul class="tests">' + tests.map(function (t) {
+    const sub = [t.reference_range ? '참고치 ' + t.reference_range : '', t.note].filter(Boolean).join(' · ');
+    return '<li data-test="' + esc(t.name) + '"><div class="nm">' + esc(t.name) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>' +
+      '<div class="val">' + esc(t.value) + '<small>' + esc(t.unit) + '</small><div>' + flagHtml(t.flag) + '</div></div>' +
+      '<span class="go" aria-hidden="true">›</span></li>';
+  }).join('') + '</ul>';
 }
 
 /* ---------------- 검사 항목 추이 ---------------- */
@@ -1204,36 +1332,75 @@ function viewTrend(testName, fromRecordId) {
   const nums = points.map(function (p) { const v = String(p.t.value).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(v) ? parseFloat(v) : NaN; });
   const numeric = points.length >= 2 && nums.every(function (n) { return !isNaN(n); });
 
+  const last = points[points.length - 1];
+  const prevNum = nums.length >= 2 ? nums[nums.length - 2] : NaN, lastNum = nums[nums.length - 1];
+  const diff = !isNaN(prevNum) && !isNaN(lastNum) ? Math.round((lastNum - prevNum) * 100) / 100 : null;
   render(
-    header(testName + ' 변화', true) +
-    (numeric ? '<div class="card">' + sparkline(points, nums) + '</div>' : '') +
-    '<div class="card"><table><tr><th>날짜</th><th>결과</th><th>참고치</th><th></th></tr>' +
+    header(testName, true) +
+    '<div class="card"><div class="muted">가장 최근 · ' + esc(fmtDate(last.date)) + '</div>' +
+    '<div class="row" style="align-items:baseline"><span style="font-size:2.2em;font-weight:800;line-height:1.2">' + esc(last.t.value) + '</span>' +
+    '<span class="muted">' + esc(last.t.unit) + '</span><span class="grow"></span>' + flagHtml(last.t.flag) + '</div>' +
+    (diff !== null ? '<div class="muted">지난번(' + esc(fmtDate(points[points.length - 2].date)) + ')보다 <b style="color:var(--ink)">' +
+      (diff > 0 ? '▲ ' + diff + ' 올랐어요' : diff < 0 ? '▼ ' + Math.abs(diff) + ' 내렸어요' : '변화 없어요') + '</b></div>' : '') +
+    (last.t.reference_range ? '<div class="muted">참고치 ' + esc(last.t.reference_range) + '</div>' : '') + '</div>' +
+    (numeric ? '<div class="card"><h3>' + points.length + '번의 변화</h3>' + sparkline(points, nums) +
+      '<p class="muted" style="margin-top:4px">점을 누르면 그날 수치가 나와요.</p></div>' : '') +
+    '<div class="card"><h3>날짜별 기록</h3><ul class="tests">' +
     points.slice().reverse().map(function (p) {
-      return '<tr><td>' + esc(fmtDate(p.date)) + '</td><td><b>' + esc(p.t.value) + '</b> ' + esc(p.t.unit) + '</td><td class="muted">' + esc(p.t.reference_range) + '</td>' +
-        '<td><span class="flag ' + esc(p.t.flag || '판정없음') + '">' + esc(p.t.flag || '-') + '</span></td></tr>';
-    }).join('') + '</table>' +
+      return '<li style="cursor:default"><div class="nm">' + esc(fmtDate(p.date)) + '</div>' +
+        '<div class="val">' + esc(p.t.value) + '<small>' + esc(p.t.unit) + '</small></div>' + flagHtml(p.t.flag) + '</li>';
+    }).join('') + '</ul>' +
     (points.length < 2 ? '<p class="muted">같은 항목의 기록이 더 쌓이면 변화를 비교할 수 있어요.</p>' : '') + '</div>'
   );
   bindBack(function () { viewDetail(fromRecordId); });
+  on('[data-pt]', 'click', function () {
+    const p = points[Number(this.getAttribute('data-pt'))];
+    toast(fmtDate(p.date) + ' · ' + p.t.value + ' ' + (p.t.unit || '') + ' (' + (p.t.flag || '판정없음') + ')');
+  });
 }
 
+/**
+ * 수치 변화 그래프 (한 가지 항목)
+ *  - 선 1개, 점은 크게, 숫자는 처음·최근·최고·최저에만 표시 (모든 점에 숫자를 달면 복잡해짐)
+ *  - 정상 범위를 벗어난 점은 빨간 점 + 아래 표에 기호·글자로 함께 표시
+ *  - 점을 누르면 그날 수치를 알려준다 (손가락으로 누르기 쉽게 투명한 큰 원)
+ */
 function sparkline(points, nums) {
-  const W = 320, H = 140, P = 28;
+  const W = 340, H = 200, L = 16, R = 34, T = 34, B = 36;
   const min = Math.min.apply(null, nums), max = Math.max.apply(null, nums);
   const span = max - min || 1;
-  const labelStep = Math.ceil(points.length / 5); // 날짜 글자가 겹치지 않게 일부만 표시
-  const xy = nums.map(function (n, i) {
-    return [P + (W - 2 * P) * (points.length === 1 ? 0.5 : i / (points.length - 1)), H - P - (H - 2 * P) * ((n - min) / span)];
+  const n = points.length;
+  const x = function (i) { return L + (W - L - R) * (n === 1 ? 0.5 : i / (n - 1)); };
+  const y = function (v) { return T + (H - T - B) * (1 - (v - min) / span); };
+  const iMax = nums.indexOf(max), iMin = nums.indexOf(min);
+  const labeled = {}; [0, n - 1, iMax, iMin].forEach(function (i) { labeled[i] = true; });
+  const dateStep = Math.max(1, Math.ceil(n / 4));
+  const line = nums.map(function (v, i) { return x(i).toFixed(1) + ',' + y(v).toFixed(1); }).join(' ');
+  const area = x(0).toFixed(1) + ',' + (H - B) + ' ' + line + ' ' + x(n - 1).toFixed(1) + ',' + (H - B);
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="수치 변화 그래프. 아래 표에 모든 값이 있습니다.">' +
+    '<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0E6B64" stop-opacity=".16"/><stop offset="1" stop-color="#0E6B64" stop-opacity="0"/></linearGradient></defs>' +
+    '<line x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R + 10) + '" y2="' + (H - B) + '" stroke="#E4DED3" stroke-width="1"/>' +
+    '<polygon points="' + area + '" fill="url(#sg)"/>' +
+    '<polyline fill="none" stroke="#0E6B64" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="' + line + '"/>';
+  nums.forEach(function (v, i) {
+    const bad = isAbnormal(points[i].t);
+    const isLast = i === n - 1;
+    const dot = !bad ? '#0E6B64' : (points[i].t.flag === '경계' ? '#B26A00' : '#C0392B'); // 표의 기호·글자와 같은 색
+    svg += '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + (isLast ? 7 : 5) + '" fill="' + dot + '" stroke="#fff" stroke-width="2"/>';
+    if (labeled[i]) {
+      const above = y(v) - 12 > 14;
+      svg += '<text x="' + Math.min(Math.max(x(i), 16), W - 16) + '" y="' + (above ? y(v) - 12 : y(v) + 24) + '" font-size="' + (isLast ? 17 : 14) + '" font-weight="' + (isLast ? 800 : 600) +
+        '" text-anchor="middle" fill="#1B1F24">' + esc(points[i].t.value) + '</text>';
+    }
+    if (i % dateStep === 0 || isLast) {
+      if (!isLast && n - 1 - i < dateStep / 2) return;
+      svg += '<text x="' + Math.min(Math.max(x(i), 22), W - 22) + '" y="' + (H - 12) + '" font-size="13" text-anchor="middle" fill="#454C58">' +
+        esc("'" + points[i].date.slice(2, 7).replace('-', '.')) + '</text>';
+    }
+    svg += '<circle data-pt="' + i + '" cx="' + x(i) + '" cy="' + y(v) + '" r="18" fill="transparent" style="cursor:pointer"><title>' +
+      esc(fmtDate(points[i].date) + ' ' + points[i].t.value + ' ' + (points[i].t.unit || '')) + '</title></circle>';
   });
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="수치 변화 그래프">' +
-    '<polyline fill="none" stroke="#1f6feb" stroke-width="3" points="' + xy.map(function (p) { return p.join(','); }).join(' ') + '"/>' +
-    xy.map(function (p, i) {
-      const bad = isAbnormal(points[i].t);
-      return '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="' + (bad ? '#d1242f' : '#1f6feb') + '"/>' +
-        '<text x="' + p[0] + '" y="' + (p[1] - 10) + '" font-size="12" text-anchor="middle" fill="#1d2433">' + esc(points[i].t.value) + '</text>' +
-        ((i % labelStep === 0 && xy.length - 1 - i >= labelStep / 2) || i === xy.length - 1
-          ? '<text x="' + p[0] + '" y="' + (H - 6) + '" font-size="10" text-anchor="middle" fill="#5b6475">' + esc(points[i].date.slice(2, 7).replace('-', '.')) + '</text>' : '');
-    }).join('') + '</svg>';
+  return svg + '</svg>';
 }
 
 /* ---------------- 의사 선생님께 질문 ---------------- */
@@ -1423,7 +1590,9 @@ function viewSettings() {
     header('설정', true) +
     (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
     '<div class="card click" id="guard"><h3>👪 보호자(가족) 관리</h3><p class="muted">내 기록을 볼 수 있는 가족 정하기 · 내가 챙겨보는 가족</p></div>' +
-    '<div class="card"><label class="check"><input type="checkbox" id="big"' + (storageGet('fontLarge') === '1' ? ' checked' : '') + '>글씨 크게 보기</label></div>' +
+    '<div class="card"><h3>🔠 글씨 크기</h3><div class="seg">' + FONT_SIZES.map(function (f) {
+      return '<button data-fs="' + f[0] + '" class="' + (fontSize() === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
+    }).join('') + '</div><p class="muted" style="margin-top:10px">첫 화면 위의 <b>가</b> 버튼으로도 바꿀 수 있어요.</p></div>' +
     '<div class="card click" id="pw"><h3>🔑 비밀번호 변경</h3></div>' +
     '<button class="block" id="logout">로그아웃</button>' +
     '<p class="muted" style="margin-top:16px">로그인: ' + esc(S.me.username) + ' · 모든 기록은 암호화되어 저장됩니다.</p>'
@@ -1433,7 +1602,7 @@ function viewSettings() {
   on('#doc', 'click', function () { viewDoctor(false); });
   on('#pw', 'click', viewChangePassword);
   on('#logout', 'click', doLogout);
-  on('#big', 'change', function () { storageSet('fontLarge', this.checked ? '1' : '0'); applyFontSize(); });
+  on('[data-fs]', 'click', function () { storageSet('fontSize', this.getAttribute('data-fs')); applyFontSize(); viewSettings(); });
 }
 
 /* ---------------- 보호자(가족) 관리 ---------------- */

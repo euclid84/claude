@@ -114,8 +114,26 @@ function viewingOther() { return !!S.ownerId; }
 function storageGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 무시 */ } }
 
+const FONT_SIZES = [['m', '보통'], ['l', '크게'], ['xl', '아주 크게']];
+function fontSize() { return storageGet('fontSize') || (storageGet('fontLarge') === '1' ? 'l' : 'm'); }
 function applyFontSize() {
-  document.body.classList.toggle('large', storageGet('fontLarge') === '1');
+  const f = fontSize();
+  document.body.classList.toggle('size-l', f === 'l');
+  document.body.classList.toggle('size-xl', f === 'xl');
+}
+/** 머리글의 "가" 버튼: 보통 → 크게 → 아주 크게 → 보통 */
+function cycleFontSize() {
+  const order = FONT_SIZES.map(function (x) { return x[0]; });
+  const next = order[(order.indexOf(fontSize()) + 1) % order.length];
+  storageSet('fontSize', next); applyFontSize();
+  toast('글씨 크기: ' + FONT_SIZES.find(function (x) { return x[0] === next; })[1]);
+}
+
+/** 상태 표시: 색 + 기호 + 글자 (색만으로 구분하지 않음) */
+const FLAG_ICON = { '정상': '✓', '높음': '▲', '낮음': '▼', '경계': '!', '이상': '!', '판정없음': '–' };
+function flagHtml(flag, text) {
+  flag = flag || '판정없음';
+  return '<span class="flag ' + esc(flag) + '"><span aria-hidden="true">' + (FLAG_ICON[flag] || '') + '</span>' + esc(text || flag) + '</span>';
 }
 
 function fmtDate(d) {
@@ -141,7 +159,8 @@ function render(html) { $app.innerHTML = html; window.scrollTo(0, 0); }
 
 function viewLogin(message) {
   render(
-    '<header class="bar"><h1>🩺 우리가족 진료기록</h1></header>' +
+    '<div class="welcome"><div class="logo" aria-hidden="true">🩺</div><h1>우리가족 진료기록</h1>' +
+    '<p>결과지를 올리면 AI 선생님이<br>쉽게 설명해 드려요</p></div>' +
     (message ? '<div class="notice">' + esc(message) + '</div>' : '') +
     '<div id="err" class="error" style="display:none"></div>' +
     '<div class="card">' +
@@ -346,45 +365,62 @@ async function loadAll() {
 /* ---------------- 홈 (기록 목록) ---------------- */
 
 function viewHome() {
-  const filters = ['전체'].concat(RECORD_TYPES);
   const q = S.search.toLowerCase();
+  const types = RECORD_TYPES.filter(function (t) { return S.records.some(function (r) { return r.data.record_type === t; }); });
+  if (S.filter !== '전체' && types.indexOf(S.filter) === -1) S.filter = '전체';
   const list = S.records.filter(function (r) {
     if (S.filter !== '전체' && r.data.record_type !== S.filter) return false;
     if (!q) return true;
     return JSON.stringify([r.data.title, r.data.hospital, r.data.department, r.data.diagnoses, r.data.summary, r.data.memo]).toLowerCase().indexOf(q) >= 0;
   });
 
+  // 인사 카드: 호칭(의사 선생님 설정의 "저를 이렇게 불러주세요")이 있으면 그걸로 부른다
+  const call = (S.doctor && S.doctor.patientCall) || nim(S.viewName);
+  const latest = S.records[0];
+  const latestAlerts = latest ? (latest.data.tests || []).filter(isAbnormal).length : 0;
+  const heroTitle = viewingOther() ? esc(nim(S.viewName)) + '의 건강 기록' : '안녕하세요,<br>' + esc(call) + ' 😊';
+  const heroSub = latest
+    ? '최근 기록 · ' + esc(fmtDate(latest.data.date)) + ' ' + esc(latest.data.title || '') + (latestAlerts ? ' · 확인할 항목 ' + latestAlerts + '개' : '')
+    : (canWrite() ? '결과지를 올리면 AI 선생님이 쉽게 설명해 드려요.' : '아직 등록된 기록이 없어요.');
+  const actions = [];
+  if (canWrite()) actions.push('<button id="add"><span class="ico">📷</span>결과지 올리기</button>');
+  if (S.records.length) actions.push('<button id="askAll"><span class="ico">💬</span>선생님께 묻기</button>');
+
   render(
-    header((viewingOther() ? '👪 ' : '🩺 ') + nim(S.viewName) + '의 진료기록', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
+    header(viewingOther() ? '👪 가족 기록' : '🩺 진료기록', false,
+      '<button class="icon" id="font" aria-label="글씨 크기">가</button><button class="icon" id="settings" aria-label="설정">⚙️</button>') +
     (S.people.length > 1 ? '<div class="chips">' + S.people.map(function (p, i) {
       return '<button class="chip' + (p.ownerId === S.ownerId ? ' on' : '') + '" data-p="' + i + '">' +
         (p.ownerId ? '👤 ' + esc(p.username) : '🙋 나') + '</button>';
     }).join('') + '</div>' : '') +
     (viewingOther() ? '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
       (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>' : '') +
-    '<div class="row"><input id="search" placeholder="검색 (병원, 진단명, 메모…)" value="' + esc(S.search) + '"></div>' +
-    '<div class="chips">' + filters.map(function (f) {
-      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
-    }).join('') + '</div>' +
+    '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
+    (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
       const seen = storageGet(notesSeenKey()) || '';
+      const total = S.familyNotes.filter(function (m) { return m.role === 'model'; }).length;
       const fresh = S.familyNotes.filter(function (m) { return m.role === 'model' && m.createdAt > seen; }).length;
-      return '<div class="card click family-card" id="notes"><b>👪 가족이 보내준 설명 ' + S.familyNotes.filter(function (m) { return m.role === 'model'; }).length + '건</b>' +
-        (fresh ? ' <span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '</div>';
+      return '<div class="card click family-card" id="notes"><div class="row"><b class="grow">👪 가족이 보내준 설명 ' + total + '건</b>' +
+        (fresh ? '<span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '<span aria-hidden="true">›</span></div></div>';
     })() : '') +
-    (S.records.length ? '<button class="block" id="askAll">💬 전체 기록으로 의사 선생님께 질문하기</button>' : '') +
+    (S.records.length ? '<h2>기록 ' + S.records.length + '건</h2>' : '') +
+    (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
+      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
+    }).join('') + '</div>' : '') +
+    (S.records.length >= 6 ? '<input id="search" placeholder="🔍 병원, 진단명, 메모로 찾기" value="' + esc(S.search) + '">' : '') +
     (list.length ? list.map(recordCard).join('') :
-      '<div class="card"><p>아직 등록된 기록이 없어요.</p>' + (canWrite() ? '<p class="muted">아래 <b>+ 결과지 등록</b> 버튼을 눌러 결과지 사진을 찍거나, 병원에서 받은 문자를 붙여넣어 보세요.</p>' : '') + '</div>') +
-    (canWrite() ? '<button class="primary fab" id="add">+ 결과지 등록</button>' : '')
+      (S.records.length ? '<div class="card"><p>찾는 기록이 없어요.</p></div>' : ''))
   );
+  on('#font', 'click', cycleFontSize);
   on('#settings', 'click', viewSettings);
+  on('#add', 'click', viewAdd);
+  on('#askAll', 'click', function () { viewChat('ALL'); });
+  on('#notes', 'click', viewFamilyNotes);
   on('.chip[data-p]', 'click', function () {
     const p = S.people[Number(this.getAttribute('data-p'))];
     if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
   });
-  on('#add', 'click', viewAdd);
-  on('#askAll', 'click', function () { viewChat('ALL'); });
-  on('#notes', 'click', viewFamilyNotes);
   on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
   on('#search', 'change', function () { S.search = this.value.trim(); viewHome(); });
   on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id')); });
@@ -392,15 +428,18 @@ function viewHome() {
 
 function recordCard(r) {
   const d = r.data;
-  const abnormal = (d.tests || []).filter(isAbnormal).length;
-  return '<div class="card click" data-id="' + esc(r.recordId) + '">' +
-    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span>' +
-    '<span class="muted grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (추정)' : '') + '</span>' +
-    (abnormal ? '<span class="flag 높음">확인 필요 ' + abnormal + '</span>' : '') +
-    (r.imageIds.length ? '<span class="muted">📷' + r.imageIds.length + '</span>' : '') + '</div>' +
-    '<h3>' + esc(d.title || '(제목 없음)') + '</h3>' +
-    '<p class="muted">' + esc([d.hospital, d.department].filter(Boolean).join(' · ')) + '</p>' +
-    (d.summary ? '<p>' + esc(d.summary.length > 90 ? d.summary.slice(0, 90) + '…' : d.summary) + '</p>' : '') +
+  const tests = d.tests || [];
+  const abnormal = tests.filter(isAbnormal);
+  const serious = abnormal.some(function (t) { return t.flag !== '경계'; });
+  const status = abnormal.length ? flagHtml(serious ? '높음' : '경계', '확인할 항목 ' + abnormal.length + '개')
+    : (tests.length ? flagHtml('정상', '모두 정상') : '');
+  return '<div class="card click rec' + (abnormal.length ? ' alert' : '') + '" data-id="' + esc(r.recordId) + '">' +
+    '<div class="row"><span class="date grow">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' <span class="muted">(추정)</span>' : '') + '</span>' +
+    '<span class="tag">' + esc(d.record_type || '기타') + '</span></div>' +
+    '<div class="title">' + esc(d.title || '(제목 없음)') + '</div>' +
+    '<div class="where">' + esc([d.hospital, d.department].filter(Boolean).join(' · ')) + (r.imageIds.length ? ' · 📎 원본 ' + r.imageIds.length : '') + '</div>' +
+    (status ? '<div style="margin-top:10px">' + status + '</div>' : '') +
+    (d.summary ? '<div class="summary">' + esc(d.summary.length > 70 ? d.summary.slice(0, 70) + '…' : d.summary) + '</div>' : '') +
     '</div>';
 }
 
@@ -610,7 +649,7 @@ function renderReview() {
     items.map(function (it, i) {
       const d = it.data;
       const tests = (d.tests || []).map(function (t) {
-        return '<span class="flag ' + esc(t.flag || '판정없음') + '" style="display:inline-block;margin:2px">' + esc(shortName(t.name)) + ' ' + esc(t.value) + '</span>';
+        return '<span style="display:inline-block;margin:3px 4px 3px 0">' + flagHtml(t.flag, shortName(t.name) + ' ' + t.value) + '</span>';
       }).join('');
       return '<div class="card" style="' + (it.checked ? '' : 'opacity:.6') + '">' +
         '<div class="row"><input type="checkbox" data-chk="' + i + '"' + (it.checked ? ' checked' : '') + '>' +
@@ -848,7 +887,8 @@ function viewDetail(recordId) {
   render(
     header(d.title || '기록', true) +
     '<div class="card">' +
-    '<div class="row"><span class="tag">' + esc(d.record_type || '기타') + '</span><span class="muted">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' (날짜 추정)' : '') + '</span></div>' +
+    '<div class="row"><span class="grow" style="font-size:1.25em;font-weight:800">' + esc(fmtDate(d.date)) + (d.date_confidence === '추정' ? ' <span class="muted">(날짜 추정)</span>' : '') + '</span>' +
+    '<span class="tag">' + esc(d.record_type || '기타') + '</span></div>' +
     '<p class="muted" style="margin-top:8px">' + esc([d.hospital, d.department, d.doctor && d.doctor + ' 선생님'].filter(Boolean).join(' · ')) + '</p>' +
     (d.summary ? '<h3>요약</h3><p>' + esc(d.summary) + '</p>' : '') +
     ((d.diagnoses || []).length ? '<h3>진단 / 판정</h3><ul>' + d.diagnoses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
@@ -877,7 +917,7 @@ function viewDetail(recordId) {
   bindBack(viewHome);
   on('#ask', 'click', function () { viewChat(recordId); });
   on('#edit', 'click', function () { viewEdit(recordId, d); });
-  on('tr[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), recordId); });
+  on('[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), recordId); });
   on('#loadPhotos', 'click', async function () {
     try {
       loading('원본을 불러오는 중…');
@@ -910,11 +950,12 @@ function viewDetail(recordId) {
 }
 
 function testTable(tests) {
-  return '<table><tr><th>항목</th><th>결과</th><th>참고치</th><th></th></tr>' + tests.map(function (t) {
-    return '<tr data-test="' + esc(t.name) + '" style="cursor:pointer"><td>' + esc(t.name) + (t.note ? '<div class="muted">' + esc(t.note) + '</div>' : '') + '</td>' +
-      '<td><b>' + esc(t.value) + '</b> ' + esc(t.unit) + '</td><td class="muted">' + esc(t.reference_range) + '</td>' +
-      '<td><span class="flag ' + esc(t.flag || '판정없음') + '">' + esc(t.flag || '-') + '</span></td></tr>';
-  }).join('') + '</table>';
+  return '<ul class="tests">' + tests.map(function (t) {
+    const sub = [t.reference_range ? '참고치 ' + t.reference_range : '', t.note].filter(Boolean).join(' · ');
+    return '<li data-test="' + esc(t.name) + '"><div class="nm">' + esc(t.name) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>' +
+      '<div class="val">' + esc(t.value) + '<small>' + esc(t.unit) + '</small><div>' + flagHtml(t.flag) + '</div></div>' +
+      '<span class="go" aria-hidden="true">›</span></li>';
+  }).join('') + '</ul>';
 }
 
 /* ---------------- 검사 항목 추이 ---------------- */
@@ -933,36 +974,75 @@ function viewTrend(testName, fromRecordId) {
   const nums = points.map(function (p) { const v = String(p.t.value).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(v) ? parseFloat(v) : NaN; });
   const numeric = points.length >= 2 && nums.every(function (n) { return !isNaN(n); });
 
+  const last = points[points.length - 1];
+  const prevNum = nums.length >= 2 ? nums[nums.length - 2] : NaN, lastNum = nums[nums.length - 1];
+  const diff = !isNaN(prevNum) && !isNaN(lastNum) ? Math.round((lastNum - prevNum) * 100) / 100 : null;
   render(
-    header(testName + ' 변화', true) +
-    (numeric ? '<div class="card">' + sparkline(points, nums) + '</div>' : '') +
-    '<div class="card"><table><tr><th>날짜</th><th>결과</th><th>참고치</th><th></th></tr>' +
+    header(testName, true) +
+    '<div class="card"><div class="muted">가장 최근 · ' + esc(fmtDate(last.date)) + '</div>' +
+    '<div class="row" style="align-items:baseline"><span style="font-size:2.2em;font-weight:800;line-height:1.2">' + esc(last.t.value) + '</span>' +
+    '<span class="muted">' + esc(last.t.unit) + '</span><span class="grow"></span>' + flagHtml(last.t.flag) + '</div>' +
+    (diff !== null ? '<div class="muted">지난번(' + esc(fmtDate(points[points.length - 2].date)) + ')보다 <b style="color:var(--ink)">' +
+      (diff > 0 ? '▲ ' + diff + ' 올랐어요' : diff < 0 ? '▼ ' + Math.abs(diff) + ' 내렸어요' : '변화 없어요') + '</b></div>' : '') +
+    (last.t.reference_range ? '<div class="muted">참고치 ' + esc(last.t.reference_range) + '</div>' : '') + '</div>' +
+    (numeric ? '<div class="card"><h3>' + points.length + '번의 변화</h3>' + sparkline(points, nums) +
+      '<p class="muted" style="margin-top:4px">점을 누르면 그날 수치가 나와요.</p></div>' : '') +
+    '<div class="card"><h3>날짜별 기록</h3><ul class="tests">' +
     points.slice().reverse().map(function (p) {
-      return '<tr><td>' + esc(fmtDate(p.date)) + '</td><td><b>' + esc(p.t.value) + '</b> ' + esc(p.t.unit) + '</td><td class="muted">' + esc(p.t.reference_range) + '</td>' +
-        '<td><span class="flag ' + esc(p.t.flag || '판정없음') + '">' + esc(p.t.flag || '-') + '</span></td></tr>';
-    }).join('') + '</table>' +
+      return '<li style="cursor:default"><div class="nm">' + esc(fmtDate(p.date)) + '</div>' +
+        '<div class="val">' + esc(p.t.value) + '<small>' + esc(p.t.unit) + '</small></div>' + flagHtml(p.t.flag) + '</li>';
+    }).join('') + '</ul>' +
     (points.length < 2 ? '<p class="muted">같은 항목의 기록이 더 쌓이면 변화를 비교할 수 있어요.</p>' : '') + '</div>'
   );
   bindBack(function () { viewDetail(fromRecordId); });
+  on('[data-pt]', 'click', function () {
+    const p = points[Number(this.getAttribute('data-pt'))];
+    toast(fmtDate(p.date) + ' · ' + p.t.value + ' ' + (p.t.unit || '') + ' (' + (p.t.flag || '판정없음') + ')');
+  });
 }
 
+/**
+ * 수치 변화 그래프 (한 가지 항목)
+ *  - 선 1개, 점은 크게, 숫자는 처음·최근·최고·최저에만 표시 (모든 점에 숫자를 달면 복잡해짐)
+ *  - 정상 범위를 벗어난 점은 빨간 점 + 아래 표에 기호·글자로 함께 표시
+ *  - 점을 누르면 그날 수치를 알려준다 (손가락으로 누르기 쉽게 투명한 큰 원)
+ */
 function sparkline(points, nums) {
-  const W = 320, H = 140, P = 28;
+  const W = 340, H = 200, L = 16, R = 34, T = 34, B = 36;
   const min = Math.min.apply(null, nums), max = Math.max.apply(null, nums);
   const span = max - min || 1;
-  const labelStep = Math.ceil(points.length / 5); // 날짜 글자가 겹치지 않게 일부만 표시
-  const xy = nums.map(function (n, i) {
-    return [P + (W - 2 * P) * (points.length === 1 ? 0.5 : i / (points.length - 1)), H - P - (H - 2 * P) * ((n - min) / span)];
+  const n = points.length;
+  const x = function (i) { return L + (W - L - R) * (n === 1 ? 0.5 : i / (n - 1)); };
+  const y = function (v) { return T + (H - T - B) * (1 - (v - min) / span); };
+  const iMax = nums.indexOf(max), iMin = nums.indexOf(min);
+  const labeled = {}; [0, n - 1, iMax, iMin].forEach(function (i) { labeled[i] = true; });
+  const dateStep = Math.max(1, Math.ceil(n / 4));
+  const line = nums.map(function (v, i) { return x(i).toFixed(1) + ',' + y(v).toFixed(1); }).join(' ');
+  const area = x(0).toFixed(1) + ',' + (H - B) + ' ' + line + ' ' + x(n - 1).toFixed(1) + ',' + (H - B);
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="수치 변화 그래프. 아래 표에 모든 값이 있습니다.">' +
+    '<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0E6B64" stop-opacity=".16"/><stop offset="1" stop-color="#0E6B64" stop-opacity="0"/></linearGradient></defs>' +
+    '<line x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R + 10) + '" y2="' + (H - B) + '" stroke="#E4DED3" stroke-width="1"/>' +
+    '<polygon points="' + area + '" fill="url(#sg)"/>' +
+    '<polyline fill="none" stroke="#0E6B64" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="' + line + '"/>';
+  nums.forEach(function (v, i) {
+    const bad = isAbnormal(points[i].t);
+    const isLast = i === n - 1;
+    const dot = !bad ? '#0E6B64' : (points[i].t.flag === '경계' ? '#B26A00' : '#C0392B'); // 표의 기호·글자와 같은 색
+    svg += '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + (isLast ? 7 : 5) + '" fill="' + dot + '" stroke="#fff" stroke-width="2"/>';
+    if (labeled[i]) {
+      const above = y(v) - 12 > 14;
+      svg += '<text x="' + Math.min(Math.max(x(i), 16), W - 16) + '" y="' + (above ? y(v) - 12 : y(v) + 24) + '" font-size="' + (isLast ? 17 : 14) + '" font-weight="' + (isLast ? 800 : 600) +
+        '" text-anchor="middle" fill="#1B1F24">' + esc(points[i].t.value) + '</text>';
+    }
+    if (i % dateStep === 0 || isLast) {
+      if (!isLast && n - 1 - i < dateStep / 2) return;
+      svg += '<text x="' + Math.min(Math.max(x(i), 22), W - 22) + '" y="' + (H - 12) + '" font-size="13" text-anchor="middle" fill="#454C58">' +
+        esc("'" + points[i].date.slice(2, 7).replace('-', '.')) + '</text>';
+    }
+    svg += '<circle data-pt="' + i + '" cx="' + x(i) + '" cy="' + y(v) + '" r="18" fill="transparent" style="cursor:pointer"><title>' +
+      esc(fmtDate(points[i].date) + ' ' + points[i].t.value + ' ' + (points[i].t.unit || '')) + '</title></circle>';
   });
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="수치 변화 그래프">' +
-    '<polyline fill="none" stroke="#1f6feb" stroke-width="3" points="' + xy.map(function (p) { return p.join(','); }).join(' ') + '"/>' +
-    xy.map(function (p, i) {
-      const bad = isAbnormal(points[i].t);
-      return '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="' + (bad ? '#d1242f' : '#1f6feb') + '"/>' +
-        '<text x="' + p[0] + '" y="' + (p[1] - 10) + '" font-size="12" text-anchor="middle" fill="#1d2433">' + esc(points[i].t.value) + '</text>' +
-        ((i % labelStep === 0 && xy.length - 1 - i >= labelStep / 2) || i === xy.length - 1
-          ? '<text x="' + p[0] + '" y="' + (H - 6) + '" font-size="10" text-anchor="middle" fill="#5b6475">' + esc(points[i].date.slice(2, 7).replace('-', '.')) + '</text>' : '');
-    }).join('') + '</svg>';
+  return svg + '</svg>';
 }
 
 /* ---------------- 의사 선생님께 질문 ---------------- */
@@ -1152,7 +1232,9 @@ function viewSettings() {
     header('설정', true) +
     (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
     '<div class="card click" id="guard"><h3>👪 보호자(가족) 관리</h3><p class="muted">내 기록을 볼 수 있는 가족 정하기 · 내가 챙겨보는 가족</p></div>' +
-    '<div class="card"><label class="check"><input type="checkbox" id="big"' + (storageGet('fontLarge') === '1' ? ' checked' : '') + '>글씨 크게 보기</label></div>' +
+    '<div class="card"><h3>🔠 글씨 크기</h3><div class="seg">' + FONT_SIZES.map(function (f) {
+      return '<button data-fs="' + f[0] + '" class="' + (fontSize() === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
+    }).join('') + '</div><p class="muted" style="margin-top:10px">첫 화면 위의 <b>가</b> 버튼으로도 바꿀 수 있어요.</p></div>' +
     '<div class="card click" id="pw"><h3>🔑 비밀번호 변경</h3></div>' +
     '<button class="block" id="logout">로그아웃</button>' +
     '<p class="muted" style="margin-top:16px">로그인: ' + esc(S.me.username) + ' · 모든 기록은 암호화되어 저장됩니다.</p>'
@@ -1162,7 +1244,7 @@ function viewSettings() {
   on('#doc', 'click', function () { viewDoctor(false); });
   on('#pw', 'click', viewChangePassword);
   on('#logout', 'click', doLogout);
-  on('#big', 'change', function () { storageSet('fontLarge', this.checked ? '1' : '0'); applyFontSize(); });
+  on('[data-fs]', 'click', function () { storageSet('fontSize', this.getAttribute('data-fs')); applyFontSize(); viewSettings(); });
 }
 
 /* ---------------- 보호자(가족) 관리 ---------------- */
