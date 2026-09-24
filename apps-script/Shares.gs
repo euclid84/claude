@@ -1,6 +1,8 @@
 /**
  * 보호자(가족) 공유
  *
+ * 관리자: Config 시트 ADMIN_USERNAMES. 가족이 로그인하면 관리자에게 자동 연결된다 (Auth.gs missingAdmins_).
+ *
  * 두 가지 가족 형태
  *  1) 본인이 직접 쓰는 가족: 각자 가입 → 기록 주인이 설정에서 보호자를 추가한다.
  *     예) 어머니가 아들을 보호자로 추가하면 아들이 어머니 기록을 본다. 반대 방향은 따로 추가해야 한다.
@@ -95,10 +97,16 @@ function api_listGuardians(token, ownerId) {
   const s = requireSession_(token);
   const owner = resolveManageable_(s, ownerId);
   const names = usernameMap_();
+  const adminNames = adminUsernames_();
+  const admins = readAll_(SHEETS.USERS).filter(function (u) { return adminNames.indexOf(String(u.username)) !== -1; })
+    .map(function (u) { return String(u.user_id); });
   return readAll_(SHEETS.SHARES)
     .filter(function (r) { return String(r.owner_id) === owner; })
     .map(function (r) {
-      return { shareId: String(r.share_id), userId: String(r.guardian_id), username: names[r.guardian_id] || '(탈퇴)', perm: String(r.perm) };
+      return {
+        shareId: String(r.share_id), userId: String(r.guardian_id), username: names[r.guardian_id] || '(탈퇴)',
+        perm: String(r.perm), isAdmin: admins.indexOf(String(r.guardian_id)) !== -1
+      };
     });
 }
 
@@ -124,6 +132,10 @@ function api_removeShare(token, shareId) {
   return withLock_(function () {
     const row = findRows_(SHEETS.SHARES, 'share_id', shareId)[0];
     if (!row) return { ok: true };
+    const guardianUser = findRows_(SHEETS.USERS, 'user_id', String(row.guardian_id))[0];
+    if (String(row.owner_id) === s.userId && guardianUser && isAdminUser_(guardianUser)) {
+      throw new Error('관리자와의 연결은 해제할 수 없어요. 가족 건강을 함께 챙기기 위한 기본 설정이에요.');
+    }
     const canManage = function () { try { resolveManageable_(s, String(row.owner_id)); return true; } catch (e) { return false; } };
     if (String(row.owner_id) !== s.userId && String(row.guardian_id) !== s.userId && !canManage()) throw new Error('권한이 없습니다.');
     if (String(row.guardian_id) === s.userId && isManaged_(findRows_(SHEETS.USERS, 'user_id', String(row.owner_id))[0] || {}) &&

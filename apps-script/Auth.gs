@@ -24,8 +24,32 @@ function api_prelogin(username) {
 function api_signupInfo() {
   return {
     allowSignup: String(getConfig_('ALLOW_SIGNUP', 'TRUE')).toUpperCase() === 'TRUE',
-    kdfIter: DEFAULT_KDF_ITER
+    kdfIter: DEFAULT_KDF_ITER,
+    admins: adminUsernames_()
   };
+}
+
+/* ---------------- 관리자 ----------------
+ * 관리자(예: 아들·사위·남편)는 가족 모두의 기록과 상담을 함께 본다.
+ * 가족이 로그인하면 관리자에게 자동으로 연결(Shares, 권한 write)된다. 가족끼리는 서로 볼 수 없다.
+ */
+function adminUsernames_() {
+  return String(getConfig_('ADMIN_USERNAMES', '')).split(',')
+    .map(function (x) { return normalizeUsername_(x); }).filter(Boolean);
+}
+
+function isAdminUser_(user) { return adminUsernames_().indexOf(String(user.username)) !== -1; }
+
+/** 이 사용자의 기록이 아직 연결되지 않은 관리자들 (공개키가 있는 관리자만) */
+function missingAdmins_(user) {
+  const names = adminUsernames_();
+  const shares = readAll_(SHEETS.SHARES).filter(function (r) { return String(r.owner_id) === String(user.user_id); });
+  return readAll_(SHEETS.USERS)
+    .filter(function (u) {
+      return names.indexOf(String(u.username)) !== -1 && String(u.user_id) !== String(user.user_id) && u.public_key &&
+        !shares.some(function (r) { return String(r.guardian_id) === String(u.user_id); });
+    })
+    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
 }
 
 /**
@@ -73,6 +97,7 @@ function api_signup(req) {
       last_login_at: ''
     });
     audit_(userId, 'signup', '');
+    if (!adminUsernames_().length) setConfig_('ADMIN_USERNAMES', username); // 첫 가입자가 관리자
     return { ok: true };
   });
 }
@@ -97,7 +122,9 @@ function api_login(username, authKey) {
     username: String(user.username),
     wrappedDek: String(user.wrapped_dek),
     encPrivateKey: user.public_key ? String(user.enc_private_key) : '',
-    publicKey: user.public_key ? String(user.public_key) : ''
+    publicKey: user.public_key ? String(user.public_key) : '',
+    isAdmin: isAdminUser_(user),
+    missingAdmins: missingAdmins_(user)
   };
 }
 

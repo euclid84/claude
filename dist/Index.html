@@ -556,7 +556,9 @@ async function doLogin() {
     S.username = res.username;
     S.me = { userId: res.userId, username: res.username, dek: await Crypt.importDek(dekRaw), dekRaw: dekRaw, privateKey: null };
     S.me.publicKey = res.publicKey || null;
+    S.me.isAdmin = !!res.isAdmin;
     await setupKeys(res.encPrivateKey);
+    await linkAdmins(res.missingAdmins || []);
     await loadPeople();
     await selectPerson(null, true);
     done();
@@ -575,7 +577,10 @@ async function viewSignup() {
     '<label for="u">아이디 (2~20자)</label><input id="u" autocapitalize="none" autocomplete="username">' +
     '<label for="p">비밀번호 (' + MIN_PW + '자 이상)</label><input id="p" type="password" autocomplete="new-password">' +
     '<label for="p2">비밀번호 확인</label><input id="p2" type="password" autocomplete="new-password">' +
-    '<p class="notice" style="margin-top:14px">⚠️ 비밀번호는 관리자도 알 수 없고 찾아드릴 수도 없습니다. 가입 후 나오는 <b>복구코드</b>를 꼭 적어두세요.</p>' +
+    (info.admins && info.admins.length
+      ? '<p class="notice" style="margin-top:14px">👑 가족 건강을 함께 챙길 수 있도록 <b>관리자(' + esc(info.admins.join(', ')) + ')</b>가 내 기록과 상담을 함께 볼 수 있어요. 다른 가족은 볼 수 없어요.</p>'
+      : '<p class="notice" style="margin-top:14px">👑 처음 가입하는 분이 <b>관리자</b>가 돼요. 관리자는 나중에 가입하는 가족들의 기록을 함께 챙겨볼 수 있어요.</p>') +
+    '<p class="notice" style="margin-top:10px">⚠️ 비밀번호는 관리자도 알 수 없고 찾아드릴 수도 없습니다. 가입 후 나오는 <b>복구코드</b>를 꼭 적어두세요.</p>' +
     '<p style="margin-top:16px"><button class="primary block" id="go"' + (info.allowSignup ? '' : ' disabled') + '>가입하기</button></p>' +
     '</div>'
   );
@@ -680,6 +685,16 @@ async function setupKeys(encPrivateKey) {
   if (!res.already) { S.me.privateKey = kp.privateKey; S.me.publicKey = kp.publicKey; }
 }
 
+/** 관리자에게 내 기록 연결 (가족이 로그인할 때 자동으로, 한 번만) */
+async function linkAdmins(admins) {
+  for (const a of admins) {
+    try {
+      const encDek = await Crypt.encryptForPublicKey(a.publicKey, S.me.dekRaw);
+      await call('api_addGuardian', S.token, a.userId, encDek, 'write');
+    } catch (e) { console.warn('관리자 연결 실패', a.username, e.message); }
+  }
+}
+
 /** 나를 보호자로 추가한 가족들의 데이터키를 내 개인키로 풀어 둔다 */
 async function loadPeople() {
   S.people = [{ ownerId: null, username: S.me.username, dek: S.me.dek, perm: 'owner' }];
@@ -761,8 +776,8 @@ function viewHome() {
     }).join('') + '</div>' : '') +
     (viewingOther() ? (S.managed
       ? '<p class="notice">내가 대신 관리하는 <b>' + esc(nim(S.viewName)) + '</b>의 기록이에요.</p>'
-      : '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
-        (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>') : '') +
+      : '<p class="notice">' + (S.me.isAdmin ? '👑 관리자로 ' : '') + '<b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
+        (canWrite() ? '' : ' (보기 전용)') + '. 상담 중 알려드리고 싶은 답변은 골라서 보내드릴 수 있어요.</p>') : '') +
     '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
     (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
@@ -1476,10 +1491,10 @@ async function viewChat(recordId, startTab) {
     render(
       header(isAll ? '전체 기록 상담' : (rec.data.title || '상담'), true, clearable ? '<button class="icon" id="clear">🗑</button>' : '') +
       (guardian && !S.managed ? '<div class="chips">' +
-        '<button class="chip' + (tab === 'team' ? ' on' : '') + '" data-tab="team">👪 보호자 상담</button>' +
+        '<button class="chip' + (tab === 'team' ? ' on' : '') + '" data-tab="team">' + (S.me.isAdmin ? '👑 관리자 상담' : '👪 가족 상담') + '</button>' +
         '<button class="chip' + (tab === 'owner' ? ' on' : '') + '" data-tab="owner">👤 ' + esc(ownerName) + ' 상담 (' + all.filter(function (m) { return m.fromOwner; }).length + ')</button>' +
         '</div>' : '') +
-      (guardian && tab === 'team' && !S.managed ? '<p class="muted">보호자끼리 함께 보는 상담이에요. 답변 아래 <b>📤 보내기</b>를 누르면 ' + esc(ownerName) + '께도 보여요.</p>' : '') +
+      (guardian && tab === 'team' && !S.managed ? '<p class="muted">' + esc(ownerName) + '께는 보이지 않는 상담이에요. 답변 아래 <b>📤 보내기</b>를 누르면 ' + esc(ownerName) + '께도 보여요.</p>' : '') +
       (guardian && tab === 'owner' ? '<p class="muted">' + esc(josa(ownerName, '이', '가')) + ' 직접 나눈 상담이에요 (읽기만 가능).</p>' : '') +
       '<p class="notice">AI 설명은 참고용입니다. 진단·처방은 반드시 담당 의사와 상의하세요. 응급 상황은 119.</p>' +
       '<div class="chat">' +
@@ -1502,7 +1517,7 @@ async function viewChat(recordId, startTab) {
     on('[data-share]', 'click', function () { share(list, Number(this.getAttribute('data-share')), true); });
     on('[data-unshare]', 'click', function () { share(list, Number(this.getAttribute('data-unshare')), false); });
     on('#clear', 'click', async function () {
-      const what = guardian ? '보호자 상담 내역을' : '내 상담 내역을';
+      const what = guardian ? (S.me.isAdmin ? '관리자 상담 내역을' : '가족 상담 내역을') : '내 상담 내역을';
       if (!(await confirmBox('이 기록의 ' + what + ' 모두 지울까요?', '지우기'))) return;
       try {
         loading(); await dcall('api_clearChats', S.token, recordId);
@@ -1599,7 +1614,9 @@ function viewSettings() {
   render(
     header('설정', true) +
     (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
-    '<div class="card click" id="guard"><h3>👪 가족 관리</h3><p class="muted">가족 추가 · 내 기록을 볼 가족 정하기 · 챙겨보는 가족</p></div>' +
+    (S.me.isAdmin
+      ? '<div class="card click" id="guard"><h3>👪 가족 관리</h3><p class="muted">가족 한눈에 보기 · 가족 추가 · 관리하는 가족</p></div>'
+      : '<div class="card click" id="guard"><h3>👪 내 기록을 함께 보는 사람</h3><p class="muted">관리자 · 내가 추가한 가족</p></div>') +
     '<div class="card"><h3>🔠 글씨 크기</h3><div class="seg">' + FONT_SIZES.map(function (f) {
       return '<button data-fs="' + f[0] + '" class="' + (fontSize() === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
     }).join('') + '</div><p class="muted" style="margin-top:10px">첫 화면 위의 <b>가</b> 버튼으로도 바꿀 수 있어요.</p></div>' +
@@ -1626,15 +1643,17 @@ const PERM_LABEL = { read: '보기만', write: '보기 + 대신 등록·수정' 
 async function guardianSection(target, onChange) {
   const list = await call('api_listGuardians', S.token, target.ownerId);
   const others = list.filter(function (g) { return g.userId !== (S.me && S.me.userId); });
-  const html = '<div class="card"><h3>' + (target.ownerId ? esc(nim(target.name)) + ' 기록을 볼 수 있는 가족' : '내 기록을 볼 수 있는 가족') + '</h3>' +
+  const html = '<div class="card"><h3>' + (target.ownerId ? esc(nim(target.name)) + ' 기록을 함께 보는 사람' : '내 기록을 함께 보는 사람') + '</h3>' +
     '<p class="muted">여기 추가한 사람만 기록과 상담 내역을 볼 수 있어요.</p>' +
     (others.length ? '<ul class="tests">' + others.map(function (g) {
-      return '<li style="cursor:default"><div class="nm">' + esc(g.username) + '<small>' + esc(PERM_LABEL[g.perm] || g.perm) + '</small></div>' +
-        '<button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button></li>';
+      const fixed = g.isAdmin && !target.ownerId;
+      return '<li style="cursor:default"><div class="nm">' + (g.isAdmin ? '👑 ' : '') + esc(g.username) +
+        '<small>' + (g.isAdmin ? '관리자 · 가족 건강을 함께 챙겨요' : esc(PERM_LABEL[g.perm] || g.perm)) + '</small></div>' +
+        (fixed ? '' : '<button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button>') + '</li>';
     }).join('') + '</ul>' : '<p>아직 없어요.</p>') +
     '<hr><label for="gname">추가할 가족의 아이디</label><input id="gname" autocapitalize="none" placeholder="예) 아내가 쓰는 아이디">' +
     '<label>권한</label>' + radioGroup('perm', target.ownerId ? 'write' : 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
-    '<p style="margin-top:12px"><button class="primary block" id="addG">보호자로 추가</button></p>' +
+    '<p style="margin-top:12px"><button class="primary block" id="addG">함께 보기 추가</button></p>' +
     '<p class="muted">추가할 가족이 먼저 가입해서 한 번 로그인해 있어야 해요.</p></div>';
 
   function bind() {
@@ -1653,7 +1672,7 @@ async function guardianSection(target, onChange) {
         loading('추가하는 중…');
         const encDek = await Crypt.encryptForPublicKey(u.publicKey, target.dekRaw);
         await call('api_addGuardian', S.token, u.userId, encDek, perm, target.ownerId);
-        toast(josa(nim(u.username), '을', '를') + ' 보호자로 추가했습니다.');
+        toast(josa(nim(u.username), '과', '와') + ' 함께 보도록 추가했습니다.');
         await onChange();
       } catch (e) { showError(e); }
     });
@@ -1671,26 +1690,32 @@ async function viewGuardians() {
   const mine = await guardianSection({ ownerId: null, name: S.me.username, dekRaw: S.me.dekRaw }, viewGuardians);
   done();
   const others = S.people.filter(function (p) { return p.ownerId; });
+  const admin = S.me.isAdmin;
   render(
-    header('👪 가족 관리', true) +
-    '<div class="card"><h3>➕ 가족 추가 (내가 대신 관리)</h3>' +
-    '<p class="muted">앱을 직접 안 쓰시는 가족(예: 아버지, 어머니)의 기록을 내가 올리고 관리해요. 가입은 필요 없어요.</p>' +
-    '<label for="pname">이름 또는 호칭</label><input id="pname" maxlength="20" placeholder="예) 아빠, 어머님, 장인어른">' +
-    '<p style="margin-top:12px"><button class="primary block" id="addP">가족 추가</button></p></div>' +
+    header(admin ? '👪 가족 관리' : '👪 함께 보는 사람', true) +
+    (admin ? '<button class="primary block" id="overview" style="margin:6px 0 4px">📋 가족 한눈에 보기</button>' +
+      '<div class="card"><h3>➕ 가족 추가</h3>' +
+      '<p class="muted"><b>직접 쓰실 가족</b>은 앱 주소와 초대코드를 보내드리면 가입 후 자동으로 연결돼요.</p>' +
+      '<p class="muted"><b>앱을 안 쓰실 가족</b>(예: 아빠)은 여기서 추가하고 내가 대신 결과지를 올려요.</p>' +
+      '<label for="pname">이름 또는 호칭</label><input id="pname" maxlength="20" placeholder="예) 아빠, 어머님, 장인어른">' +
+      '<p style="margin-top:12px"><button class="primary block" id="addP">대신 관리할 가족 추가</button></p></div>' : '') +
 
-    '<div class="card"><h3>내가 챙겨보는 가족</h3>' +
+    (admin || others.length ? '<div class="card"><h3>' + (admin ? '관리하는 가족' : '내가 챙겨보는 가족') + '</h3>' : '') +
     (others.length ? '<ul class="tests">' + others.map(function (p) {
-      const badge = p.managed ? '내가 대신 관리' : (PERM_LABEL[p.perm] || p.perm);
+      const badge = p.managed ? '내가 대신 관리' : (S.me.isAdmin ? '직접 쓰는 가족' : (PERM_LABEL[p.perm] || p.perm));
       return '<li style="cursor:default"><div class="nm">' + esc(p.username) + '<small>' + esc(badge) + '</small></div>' +
         (p.managed && p.perm === 'write'
           ? '<button class="soft" data-manage="' + esc(p.ownerId) + '">관리</button>'
-          : '<button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button>') + '</li>';
-    }).join('') + '</ul>' : '<p class="muted">아직 없어요. 위에서 가족을 추가하거나, 가족이 나를 보호자로 추가하면 여기 나타나요.</p>') + '</div>' +
+          : (S.me.isAdmin ? '<button class="soft" data-open="' + esc(p.ownerId) + '">보기</button>'
+            : '<button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button>')) + '</li>';
+    }).join('') + '</ul>' : (admin ? '<p class="muted">아직 없어요. 가족이 가입하거나 위에서 추가하면 여기 나타나요.</p>' : '')) +
+    (admin || others.length ? '</div>' : '') +
 
     mine.html
   );
   bindBack(viewSettings);
   mine.bind();
+  on('#overview', 'click', function () { viewFamilyOverview().catch(showError); });
 
   on('#addP', 'click', async function () {
     const name = val('#pname');
@@ -1708,6 +1733,7 @@ async function viewGuardians() {
     } catch (e) { showError(e); }
   });
   on('[data-manage]', 'click', function () { viewProfileManage(this.getAttribute('data-manage')).catch(showError); });
+  on('[data-open]', 'click', function () { selectPerson(this.getAttribute('data-open')).catch(showError); });
   on('[data-leave]', 'click', async function () {
     const id = this.getAttribute('data-leave'), name = this.getAttribute('data-name');
     if (!(await confirmBox(nim(name) + '의 기록을 더 이상 보지 않을까요? (다시 보려면 ' + josa(nim(name), '이', '가') + ' 다시 추가해야 해요)', '그만 보기'))) return;
@@ -1719,6 +1745,40 @@ async function viewGuardians() {
       toast('해제했습니다.');
       await viewGuardians();
     } catch (e) { showError(e); }
+  });
+}
+
+/** 관리자: 가족 모두의 최근 기록과 확인할 항목을 한 화면에서 점검 */
+async function viewFamilyOverview() {
+  loading('가족 기록을 모으는 중…');
+  const rows = [];
+  for (const p of S.people) {
+    let recs = [];
+    try {
+      const list = await call('api_listRecords', S.token, p.ownerId);
+      for (const r of list) { try { recs.push(await Crypt.decryptJson(p.dek, r.encData) || {}); } catch (e) { /* 건너뜀 */ } }
+    } catch (e) { /* 권한 없음 등 */ }
+    recs.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+    const latest = recs[0];
+    rows.push({ p: p, count: recs.length, latest: latest, alerts: latest ? (latest.tests || []).filter(isAbnormal).length : 0 });
+  }
+  done();
+  render(
+    header('📋 가족 한눈에', true) +
+    rows.map(function (x, i) {
+      const status = !x.latest ? '<span class="muted">아직 기록이 없어요</span>'
+        : x.alerts ? flagHtml('경계', '확인할 항목 ' + x.alerts + '개') : ((x.latest.tests || []).length ? flagHtml('정상', '모두 정상') : '');
+      return '<div class="card click rec' + (x.alerts ? ' alert' : '') + '" data-who="' + i + '">' +
+        '<div class="row"><span class="title grow" style="margin:0">' + (x.p.ownerId ? '👤 ' : '🙋 ') + esc(x.p.ownerId ? x.p.username : '나') + '</span>' +
+        '<span class="muted">기록 ' + x.count + '건</span></div>' +
+        (x.latest ? '<div class="where">최근 · ' + esc(fmtDate(x.latest.date)) + ' ' + esc(x.latest.title || '') + '</div>' : '') +
+        '<div style="margin-top:8px">' + status + '</div></div>';
+    }).join('')
+  );
+  bindBack(viewGuardians);
+  on('[data-who]', 'click', function () {
+    const p = rows[Number(this.getAttribute('data-who'))].p;
+    selectPerson(p.ownerId).catch(showError);
   });
 }
 
