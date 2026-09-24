@@ -81,9 +81,20 @@ async function addManualRecord(page, title) {
     google.script.run.withSuccessHandler(res).withFailureHandler(e => res('ERR ' + e.message)).api_listChats(S.token, id, o)), [recordId, ownerId]);
   const tok = page => page.evaluate(() => S.token);
   const uid = page => page.evaluate(() => S.me.userId);
+  const userIdOf = name => gas.sheets.Users._rows.find(r => r[1] === name || r[17] === name)[0];
+  const openConsole = async tab => {
+    await me.evaluate(() => viewSettings()); await waitIdle(me); await me.click('#console'); await waitIdle(me);
+    if (tab) { await me.click('[data-cx="' + tab + '"]'); await waitIdle(me); }
+  };
+  const setPerm = async (ownerId, viewerId, perm) => {
+    await openConsole('perms');
+    await me.selectOption('#ownerSel', ownerId); await waitIdle(me);
+    await me.selectOption('select[data-v="' + viewerId + '"]', perm); await waitIdle(me);
+  };
+  const bodyText = page => page.evaluate(() => document.body.innerText);
 
   // 1) 관리자(나) 첫 가입 → 자동으로 관리자
-  const me = await newUserPage(browser);
+  var me = await newUserPage(browser);
   await signupAndLogin(me, 'admin', 'admin-pass-123');
   check(gas.ctx.getConfig_('ADMIN_USERNAMES') === 'admin', '첫 가입자가 관리자로 지정됨');
   check(await me.evaluate(() => S.me.isAdmin === true), '관리자 로그인 시 관리자 표시');
@@ -119,12 +130,13 @@ async function addManualRecord(page, title) {
   // 4) 관리자 다시 로그인 → 가족 전체 보기
   await me.reload(); await login(me, 'admin', 'admin-pass-123');
   check(await me.evaluate(() => S.people.map(p => p.username).sort().join(',') === ['admin', 'wife', '어머니'].sort().join(',')), '관리자: 나 + 어머니 + 아내 모두 보임');
-  await me.click('#settings'); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
-  await me.click('#overview'); await waitIdle(me);
-  check(await me.evaluate(() => document.body.innerText.includes('어머니') && document.body.innerText.includes('기록 1건')), '가족 한눈에 보기: 어머니 기록 1건 표시');
-  await me.screenshot({ path: OUT + '/admin_overview.png' });
+  await openConsole('overview');
+  check(await me.evaluate(() => !!document.querySelector('body.console .cx-kpis')), '관리자 콘솔: 전문가용 레이아웃(KPI·탭)');
+  check((await bodyText(me)).includes('모든 권한 정책이 적용되어 있습니다'), '현황: 권한 동기화 정상');
+  check(await me.evaluate(() => [...document.querySelectorAll('[data-who]')].some(tr => tr.innerText.includes('어머니') && tr.querySelector('.num').innerText === '1')), '현황: 어머니 기록 1건 표시');
+  await me.screenshot({ path: OUT + '/admin_overview.png', fullPage: true });
   await me.click('[data-who="' + (await me.evaluate(() => S.people.findIndex(p => p.username === '어머니'))) + '"]'); await waitIdle(me);
-  check(await me.evaluate(() => S.viewName === '어머니' && S.records[0].data.title === '어머니 혈액검사'), '한눈에 보기에서 어머니 선택 → 어머니 기록 화면');
+  check(await me.evaluate(() => S.viewName === '어머니' && S.records[0].data.title === '어머니 혈액검사'), '현황에서 어머니 선택 → 어머니 기록 화면');
   await me.screenshot({ path: OUT + '/admin_views_mom.png' });
   await addManualRecord(me, '관리자가 대신 올린 어머니 기록');
   check(await me.evaluate(() => S.records.length === 2), '관리자가 어머니 기록 대신 등록');
@@ -160,21 +172,22 @@ async function addManualRecord(page, title) {
 
   // 6) 대신 관리하는 가족 프로필 (아빠) → 아내와 함께 보기 → 본인 계정으로 넘겨주기
   await me.reload(); await login(me, 'admin', 'admin-pass-123');
-  await me.click('#settings'); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
-  await me.screenshot({ path: OUT + '/admin_family.png' });
+  await openConsole('members');
+  await me.screenshot({ path: OUT + '/admin_members.png', fullPage: true });
   await me.fill('#pname', '아빠'); await me.click('#addP'); await waitIdle(me);
-  check(await me.evaluate(() => S.viewName === '아빠' && S.managed === true && canWrite()), '가족 프로필 "아빠" 생성 후 아빠 화면');
+  const dadId = userIdOf('아빠');
+  await me.click('[data-manage="' + dadId + '"]'); await waitIdle(me);
+  await me.click('#openRec'); await waitIdle(me);
+  check(await me.evaluate(() => S.viewName === '아빠' && S.managed === true && canWrite()), '구성원 "아빠"(대신 관리) 생성 후 아빠 기록 화면');
   await me.screenshot({ path: OUT + '/dad_home.png' });
   await addManualRecord(me, '아빠 건강검진');
-  const dadId = await me.evaluate(() => S.ownerId);
   const dadUsername = gas.sheets.Users._rows.find(r => r[0] === dadId)[1];
   check(!!(await tryCall(mom, 'api_login', [dadUsername, 'AAAA'])).err, '관리 프로필은 로그인할 수 없음');
-  await me.click('#settings'); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
-  await me.click('[data-manage]'); await waitIdle(me);
-  await me.fill('#gname', 'wife');
-  await me.click('#addG'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
+  const wifeId = await uid(wife);
+  await setPerm(dadId, wifeId, 'write');
   await wife.reload(); await login(wife, 'wife', 'wife-pass-789');
-  check(await wife.evaluate(() => S.people.some(p => p.username === '아빠') && !S.people.some(p => p.username === '어머니')), '아내: 아빠 프로필만 추가로 보임 (어머니는 여전히 안 보임)');
+  check(await wife.evaluate(() => S.people.some(p => p.username === '아빠' && p.perm === 'write') && !S.people.some(p => p.username === '어머니')), '아내: 아빠 기록만 추가로 보임 (어머니는 여전히 안 보임)');
+  await openConsole('members'); await me.click('[data-manage="' + dadId + '"]'); await waitIdle(me);
   await me.fill('#cu', 'dad'); await me.fill('#cp', 'dad-pass-000'); await me.fill('#cp2', 'dad-pass-000');
   await me.click('#claim'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
   check(await me.evaluate(() => /[A-Z0-9]{4}-/.test(document.querySelector('.code').textContent)), '넘겨주기 후 복구코드 표시');
@@ -183,22 +196,24 @@ async function addManualRecord(page, title) {
   check(await dad.evaluate(() => S.records.length === 1 && S.records[0].data.title === '아빠 건강검진'), '아빠: 본인 아이디로 로그인해서 기존 기록 보기');
   check(await dad.evaluate(() => S.people.length === 1), '아빠 화면에는 다른 가족이 안 보임');
 
-  // 8) 부부끼리 서로 보기: 관리자가 장모님(어머니) ↔ 장인어른 연결
+  // 8) 부부끼리 서로 보기: 장인어른 가입 직후(첫 로그인 전)에 관리자가 미리 정책을 정해두면 로그인 시 자동 적용
   const fil = await newUserPage(browser);
-  await signupAndLogin(fil, '장인어른', 'fil-pass-321');
-  await addManualRecord(fil, '장인어른 혈압 기록');
-  check(await fil.evaluate(() => S.people.length === 1), '장인어른: 처음엔 본인 기록만');
+  await fil.click('#toSignup'); await waitIdle(fil);
+  await fil.fill('#inv', invite); await fil.fill('#u', '장인어른'); await fil.fill('#p', 'fil-pass-321'); await fil.fill('#p2', 'fil-pass-321');
+  await fil.click('#go'); await waitIdle(fil); await fil.check('#ok'); await fil.click('#go');
+  const filId = userIdOf('장인어른');
   await me.reload(); await login(me, 'admin', 'admin-pass-123');
-  const goFamily = async () => { await me.evaluate(() => viewSettings()); await waitIdle(me); await me.click('#guard'); await waitIdle(me); };
-  const pickFor = async (memberName, pickName) => {
-    await goFamily();
-    const id = await me.evaluate(n => S.people.find(p => p.username === n).ownerId, memberName);
-    await me.click('[data-member="' + id + '"]'); await waitIdle(me);
-    await me.click('[data-pick="' + pickName + '"]'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
-  };
-  await pickFor('어머니', '장인어른');
-  await me.screenshot({ path: OUT + '/admin_member_manage.png' });
-  await pickFor('장인어른', '어머니');
+  await setPerm(momId, filId, 'read');
+  await setPerm(filId, momId, 'read');
+  check((await bodyText(me)).includes('첫 로그인 후 자동 적용'), '첫 로그인 전 구성원에게 준 권한은 "대기"로 표시');
+  await me.screenshot({ path: OUT + '/admin_perms_pending.png', fullPage: true });
+  await login(fil, '장인어른', 'fil-pass-321');
+  await addManualRecord(fil, '장인어른 혈압 기록');
+  check(!!gas.sheets.Shares._rows.find(r => r[1] === filId && r[2] === meId), '장인어른 첫 로그인 → 관리자에게 자동 연결');
+  check(!!gas.sheets.Shares._rows.find(r => r[1] === filId && r[2] === momId && r[4] === 'read'), '장인어른 첫 로그인 → 미리 정한 "장모님이 장인어른 기록 조회" 자동 적용');
+  await openConsole('perms'); // 콘솔을 열면 관리자가 가진 어머니 열쇠로 장인어른 몫을 자동 발급
+  await me.screenshot({ path: OUT + '/admin_perms.png', fullPage: true });
+  check(await me.evaluate(() => !document.querySelector('.cx-badge.pending')), '관리자 콘솔 동기화 후 대기 항목 없음');
   await fil.reload(); await login(fil, '장인어른', 'fil-pass-321');
   check(await fil.evaluate(() => S.people.some(p => p.username === '어머니') && !S.people.some(p => p.username === 'wife')), '장인어른: 장모님(어머니) 기록 보임, 아내 기록은 안 보임');
   await mom.reload(); await login(mom, '어머니', 'mom-pass-456');
@@ -209,41 +224,41 @@ async function addManualRecord(page, title) {
   check(memberTry.err && memberTry.err.includes('관리'), '가족(어머니)은 다른 가족 설정을 바꿀 수 없음');
 
   // 9) 관리자 콘솔 (시트를 고치지 않고 앱에서 설정)
-  const openConsole = async (ownerName) => {
-    await me.evaluate(() => viewSettings()); await waitIdle(me); await me.click('#console'); await waitIdle(me);
-    if (ownerName) {
-      const id = await me.evaluate(n => S.people.find(p => p.username === n).ownerId, ownerName);
-      await me.click('[data-owner="' + id + '"]'); await waitIdle(me);
-    }
-  };
-  const wifeId = await uid(wife), filId = await uid(fil);
-  // 9-1) 조회 권한: 장인어른 기록을 아내가 "보기" → 다시 "안 보임"
-  await openConsole('장인어른');
-  await me.click('[data-perm="read"][data-v="' + wifeId + '"]'); await waitIdle(me);
-  await me.screenshot({ path: OUT + '/admin_console.png', fullPage: true });
+  // 9-1) 조회 권한: 장인어른 기록을 아내가 "조회" → 다시 "없음"
+  await setPerm(filId, wifeId, 'read');
   await wife.reload(); await login(wife, 'wife', 'wife-pass-789');
-  check(await wife.evaluate(() => { const p = S.people.find(x => x.username === '장인어른'); return p && p.perm === 'read'; }), '콘솔: 아내에게 장인어른 기록 "보기" 권한 부여');
-  await me.click('[data-perm="none"][data-v="' + wifeId + '"]'); await waitIdle(me);
+  check(await wife.evaluate(() => { const p = S.people.find(x => x.username === '장인어른'); return p && p.perm === 'read'; }), '콘솔: 아내에게 장인어른 기록 "조회" 권한 부여');
+  await setPerm(filId, wifeId, 'none');
   const denied = await tryCall(wife, 'api_listRecords', [await tok(wife), filId]);
-  check(denied.err && denied.err.includes('권한이 없습니다'), '콘솔: "안 보임"으로 바꾸면 즉시 열람 거부');
-  // 9-2) 관리자 지정: 대신 관리 프로필(할머니) 먼저 만들고 → 아내를 관리자로 지정 → 가족 전체가 바로 보임
-  await me.evaluate(() => viewSettings()); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
+  check(denied.err && denied.err.includes('권한이 없습니다'), '콘솔: "없음"으로 바꾸면 즉시 열람 거부');
+  const forged = await tryCall(wife, 'api_fulfillAccess', [await tok(wife), [{ ownerId: momId, viewerId: wifeId, encDek: 'QUFBQQ==' }]]);
+  check(forged.err && forged.err.includes('정책에 없는'), '정책에 없는 열쇠를 스스로 발급하려 하면 거부');
+  // 9-2) 관리자 지정: 대신 관리 구성원(할머니) 먼저 만들고 → 아내를 관리자로 지정 → 가족 전체가 바로 보임
+  await openConsole('members');
   await me.fill('#pname', '할머니'); await me.click('#addP'); await waitIdle(me);
-  await openConsole();
   await me.click('[data-role="' + wifeId + '"]'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
   check(gas.ctx.getConfig_('ADMIN_USERNAMES').split(',').includes('wife'), '콘솔: 아내를 관리자로 지정 (Config에 반영)');
   await wife.reload(); await login(wife, 'wife', 'wife-pass-789');
   const wifeSees = await wife.evaluate(() => S.people.map(p => p.username));
-  check(['admin', '어머니', '장인어른', '할머니'].every(n => wifeSees.includes(n)), '지정 즉시 공동 관리자(아내)가 가족 전체를 봄 (가족 재로그인 불필요) → ' + wifeSees.join(','));
-  check(await wife.evaluate(() => S.me.isAdmin === true), '아내 로그인 시 관리자 표시');
-  // 9-3) 관리자 해제 → 역할만 해제, 마지막 관리자는 해제 불가
+  check(['admin', '어머니', '장인어른', '할머니', '아빠'].every(n => wifeSees.includes(n)), '지정 즉시 공동 관리자(아내)가 가족 전체를 봄 (가족 재로그인 불필요) → ' + wifeSees.join(','));
+  check(await wife.evaluate(() => S.me.isAdmin === true && S.people.find(p => p.username === '어머니').perm === 'write'), '아내: 관리자 표시 + 조회·등록 권한');
+  // 9-3) 관리자 해제 → 역할로 받은 열쇠는 즉시 회수, 따로 받은 권한(아빠 조회·등록)은 유지
+  await openConsole('members');
   await me.click('[data-role="' + wifeId + '"]'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
   check(!gas.ctx.getConfig_('ADMIN_USERNAMES').split(',').includes('wife'), '콘솔: 아내 관리자 해제');
+  const afterRevoke = await tryCall(wife, 'api_listRecords', [await tok(wife), momId]);
+  check(afterRevoke.err && afterRevoke.err.includes('권한이 없습니다'), '해제 즉시 역할로 받은 열쇠 회수 (어머니 기록 거부)');
+  check(!!(await tryCall(wife, 'api_listRecords', [await tok(wife), dadId])).ok, '따로 받은 권한(아빠 기록)은 유지');
   const lastAdmin = await tryCall(me, 'api_adminSetRole', [await tok(me), await uid(me), false]);
   check(lastAdmin.err && lastAdmin.err.includes('최소 1명'), '마지막 관리자는 해제할 수 없음');
   const notAdmin = await tryCall(mom, 'api_adminState', [await tok(mom)]);
   check(notAdmin.err && notAdmin.err.includes('관리자만'), '가족은 관리자 콘솔을 쓸 수 없음');
   // 9-4) 가입 설정: 가입 막기 → 새 가입 거부
+  await openConsole('audit');
+  check((await bodyText(me)).includes('권한 정책 변경') && (await bodyText(me)).includes('열쇠 자동 발급'), '활동 기록: 정책 변경·자동 발급 내역');
+  await me.screenshot({ path: OUT + '/admin_audit.png', fullPage: true });
+  await openConsole('signup');
+  await me.screenshot({ path: OUT + '/admin_signup.png', fullPage: true });
   await me.uncheck('#allow'); await waitIdle(me);
   const stranger = await newUserPage(browser);
   await stranger.click('#toSignup'); await waitIdle(stranger);

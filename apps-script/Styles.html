@@ -214,4 +214,73 @@
   hr { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
   details summary { cursor: pointer; font-weight: 800; min-height: 48px; display: flex; align-items: center; }
   svg text { font-family: inherit; }
+
+  /* =====================================================================
+   *  관리자 콘솔 (body.console): 업무용 화면 — 작은 글씨·표·탭·중립색, 이모지 없음
+   *  어르신용 화면과 분리. 글씨 크기 설정(가)과 무관하게 15px 고정.
+   * ===================================================================== */
+  body.console, body.console.size-l, body.console.size-xl { --fs: 15px; }
+  body.console { background: #F3F4F6; letter-spacing: 0; line-height: 1.5; }
+  body.console #app { max-width: 960px; }
+  body.console header.bar { background: rgba(243, 244, 246, .96); padding: 10px 0 8px; }
+  body.console header.bar h1 { font-size: 1.1em; font-weight: 700; }
+  body.console h3 { font-size: .95em; font-weight: 700; margin-bottom: 10px; }
+  body.console .card { border-radius: 10px; box-shadow: none; border-color: #E2E4E9; padding: 16px; margin: 12px 0; }
+  body.console button, body.console .btn { min-height: 34px; border-radius: 7px; padding: 5px 12px; font-size: .88em; font-weight: 600; border-width: 1px; gap: 6px; }
+  body.console button.icon { min-width: 36px; min-height: 36px; padding: 4px 8px; }
+  body.console button.primary { box-shadow: none; }
+  body.console button.soft { background: #fff; border-color: #CBD5E1; color: #1F2937; }
+  body.console button.danger { border-color: #F3C2BD; }
+  body.console input, body.console select, body.console textarea { min-height: 38px; border-radius: 7px; padding: 7px 10px; border-width: 1px; font-size: .95em; }
+  body.console label { font-size: .85em; font-weight: 700; margin: 12px 0 6px; }
+  body.console .muted { font-size: .85em; color: #5B6270; }
+  body.console .notice { border-radius: 8px; font-size: .88em; }
+  body.console .tests li { padding: 10px 2px; }
+  body.console .tests .val { font-size: 1em; }
+  body.console .code { font-size: 1em; border-width: 1px; border-radius: 8px; }
+  body.console #toast { border-radius: 8px; font-size: .9em; padding: 10px 16px; }
+
+  .cx-crumb { font-size: .8em; color: #6B7280; margin: 0 0 2px; }
+  .cx-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 12px; }
+  .cx-kpi { background: #fff; border: 1px solid #E2E4E9; border-radius: 10px; padding: 10px 12px; }
+  .cx-kpi .v { font-size: 1.45em; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .cx-kpi .k { font-size: .75em; color: #5B6270; font-weight: 600; }
+  .cx-kpi.warn { border-color: #E8B04A; background: #FFF8EA; }
+  .cx-kpi.warn .v { color: #8A5A00; }
+  @media (max-width: 420px) { .cx-kpis { grid-template-columns: repeat(2, 1fr); } }
+  .cx-tabs { display: flex; gap: 2px; border-bottom: 1px solid #D9DCE1; margin: 4px 0 12px; overflow-x: auto; }
+  body.console .cx-tabs button { border: none; background: none; border-bottom: 2px solid transparent; border-radius: 0; color: #5B6270; min-height: 40px; padding: 6px 12px; white-space: nowrap; font-weight: 600; }
+  body.console .cx-tabs button.on { color: #111827; border-bottom-color: var(--primary); }
+  .cx-table { width: 100%; border-collapse: collapse; font-size: .92em; }
+  .cx-table th { text-align: left; font-size: .78em; font-weight: 700; color: #5B6270; background: #F9FAFB; padding: 8px 10px; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+  .cx-table td { padding: 10px; border-bottom: 1px solid #EEF0F3; vertical-align: middle; }
+  .cx-table tr:last-child td { border-bottom: none; }
+  .cx-table tr.click { cursor: pointer; }
+  .cx-table tr.click:hover td { background: #F9FAFB; }
+  .cx-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cx-table .act { text-align: right; white-space: nowrap; }
+  .cx-dim { color: #9CA3AF; }
+  .cx-table td > b { white-space: nowrap; }
+  body.console .cx-table .act button { min-height: 34px; padding: 4px 10px; font-size: .88em; }
+  .cx-sub { display: block; font-size: .82em; color: #6B7280; font-weight: 500; }
+  .cx-wrap { overflow-x: auto; border: 1px solid #E2E4E9; border-radius: 10px; background: #fff; }
+  .cx-badge { display: inline-block; font-size: .76em; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: #EEF0F3; color: #374151; white-space: nowrap; margin: 1px 2px 1px 0; }
+  .cx-badge.admin { background: #E3F1EF; color: #0A524D; }
+  .cx-badge.managed { background: #EEF2FF; color: #3730A3; }
+  .cx-badge.pending { background: #FFF4DC; color: #7A4B00; }
+  .cx-badge.alert { background: #FDE8E6; color: #A61B1B; }
+  .cx-badge.ok { background: #E6F4EA; color: #17693A; }
+  .cx-matrix td, .cx-matrix th { text-align: center; }
+  .cx-matrix th:first-child, .cx-matrix td:first-child { text-align: left; position: sticky; left: 0; background: #fff; }
+  .cx-matrix th:first-child { background: #F9FAFB; }
+  .cx-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #EEF0F3; }
+  .cx-row:last-child { border-bottom: none; }
+  .cx-row .grow { flex: 1; }
+  .cx-switch { position: relative; width: 46px; height: 26px; flex-shrink: 0; }
+  .cx-switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; inset: 0; cursor: pointer; z-index: 1; transform: none; }
+  .cx-switch span { position: absolute; inset: 0; border-radius: 999px; background: #CBD5E1; transition: background .15s; }
+  .cx-switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .cx-switch input:checked + span { background: var(--primary); }
+  .cx-switch input:checked + span::after { transform: translateX(20px); }
+  .cx-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 700; letter-spacing: 1px; background: #F3F4F6; padding: 4px 10px; border-radius: 6px; }
 </style>

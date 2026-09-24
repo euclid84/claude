@@ -21,6 +21,7 @@ const SHEETS = {
   CHATS: 'Chats',
   PROFILES: 'DoctorProfiles',
   SHARES: 'Shares',
+  POLICY: 'AccessPolicy',
   AUDIT: 'AuditLog'
 };
 
@@ -39,6 +40,7 @@ const HEADERS = {
   Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id', 'shared'],
   DoctorProfiles: ['user_id', 'updated_at', 'enc_data'],
   Shares: ['share_id', 'owner_id', 'guardian_id', 'enc_dek', 'perm', 'created_at'],
+  AccessPolicy: ['owner_id', 'viewer_id', 'perm', 'updated_at', 'updated_by'],
   AuditLog: ['time', 'user_id', 'action', 'detail']
 };
 
@@ -150,7 +152,7 @@ function setup() {
  * 새 버전에서 추가된 시트/열을 자동으로 만든다 (기존 데이터는 건드리지 않음).
  * 새 열은 항상 오른쪽 끝에 추가되므로 기존 행과 어긋나지 않는다.
  */
-const SCHEMA_VERSION = '4';
+const SCHEMA_VERSION = '5';
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
@@ -161,6 +163,7 @@ function ensureSchema_() {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
   });
+  if (Number(props.getProperty('SCHEMA_VERSION') || 0) < 5) withLock_(migrateSharesToPolicy_);
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
 
@@ -351,7 +354,7 @@ function api_signupInfo() {
 
 /* ---------------- 관리자 ----------------
  * 관리자(예: 아들·사위·남편)는 가족 모두의 기록과 상담을 함께 본다.
- * 가족이 로그인하면 관리자에게 자동으로 연결(Shares, 권한 write)된다. 가족끼리는 서로 볼 수 없다.
+ * 실제 연결(열쇠 발급)은 Access.gs 의 동기화가 맡는다. 가족끼리는 정책을 주지 않으면 서로 볼 수 없다.
  */
 function adminUsernames_() {
   return String(getConfig_('ADMIN_USERNAMES', '')).split(',')
@@ -359,50 +362,6 @@ function adminUsernames_() {
 }
 
 function isAdminUser_(user) { return adminUsernames_().indexOf(String(user.username)) !== -1; }
-
-/** 공개키가 있는 관리자 목록 (except: 제외할 user_id) */
-function adminsWithKeys_(except) {
-  const names = adminUsernames_();
-  return readAll_(SHEETS.USERS)
-    .filter(function (u) { return names.indexOf(String(u.username)) !== -1 && u.public_key && String(u.user_id) !== String(except); })
-    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
-}
-
-/**
- * 내가 대신 관리하는 가족 프로필 중, 다른(공동) 관리자에게 아직 연결되지 않은 것
- * → 로그인한 사람이 브라우저에서 프로필 데이터키를 그 관리자 공개키로 암호화해 연결한다.
- */
-function missingAdminLinksForProfiles_(user) {
-  const admins = adminsWithKeys_(user.user_id);
-  if (!admins.length) return [];
-  const managedIds = readAll_(SHEETS.USERS).filter(isManaged_).map(function (u) { return String(u.user_id); });
-  const shares = readAll_(SHEETS.SHARES);
-  return shares
-    .filter(function (r) {
-      return String(r.guardian_id) === String(user.user_id) && String(r.perm) === 'write' && managedIds.indexOf(String(r.owner_id)) !== -1;
-    })
-    .map(function (r) {
-      return {
-        ownerId: String(r.owner_id),
-        admins: admins.filter(function (a) {
-          return !shares.some(function (x) { return String(x.owner_id) === String(r.owner_id) && String(x.guardian_id) === a.userId; });
-        })
-      };
-    })
-    .filter(function (x) { return x.admins.length; });
-}
-
-/** 이 사용자의 기록이 아직 연결되지 않은 관리자들 (공개키가 있는 관리자만) */
-function missingAdmins_(user) {
-  const names = adminUsernames_();
-  const shares = readAll_(SHEETS.SHARES).filter(function (r) { return String(r.owner_id) === String(user.user_id); });
-  return readAll_(SHEETS.USERS)
-    .filter(function (u) {
-      return names.indexOf(String(u.username)) !== -1 && String(u.user_id) !== String(user.user_id) && u.public_key &&
-        !shares.some(function (r) { return String(r.guardian_id) === String(u.user_id); });
-    })
-    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
-}
 
 /**
  * 회원가입
@@ -475,9 +434,7 @@ function api_login(username, authKey) {
     wrappedDek: String(user.wrapped_dek),
     encPrivateKey: user.public_key ? String(user.enc_private_key) : '',
     publicKey: user.public_key ? String(user.public_key) : '',
-    isAdmin: isAdminUser_(user),
-    missingAdmins: missingAdmins_(user),
-    profileLinks: missingAdminLinksForProfiles_(user)
+    isAdmin: isAdminUser_(user)
   };
 }
 
@@ -939,7 +896,8 @@ function assertEnc_(encData) {
 /**
  * 보호자(가족) 공유
  *
- * 관리자: Config 시트 ADMIN_USERNAMES. 가족이 로그인하면 관리자에게 자동 연결된다 (Auth.gs missingAdmins_).
+ * 관리자: Config 시트 ADMIN_USERNAMES. 누가 누구를 볼지는 Access.gs 의 정책 엔진이 정하고,
+ * 여기 있는 API는 그 정책을 쓰거나(기록 주인의 설정) 열쇠를 읽는 역할을 한다.
  *
  * 두 가지 가족 형태
  *  1) 본인이 직접 쓰는 가족: 각자 가입 → 기록 주인이 설정에서 보호자를 추가한다.
@@ -1015,7 +973,11 @@ function api_addGuardian(token, guardianId, encDek, perm, ownerId) {
   if (guardianId === owner) throw new Error('본인은 보호자로 추가할 수 없습니다.');
   const guardian = findRows_(SHEETS.USERS, 'user_id', guardianId)[0];
   if (!guardian) throw new Error('해당 사용자를 찾을 수 없습니다.');
+  if (!guardian.public_key) throw new Error('그 분이 앱에 한 번 로그인한 뒤에 추가할 수 있습니다.');
+  if (isManaged_(guardian)) throw new Error('대신 관리하는 구성원에게는 권한을 줄 수 없습니다.');
   return withLock_(function () {
+    writePolicy_(s.userId, owner, guardianId, perm);
+    reconcileAccess_(s.userId);
     const existing = findShare_(owner, guardianId);
     if (existing) {
       updateRow_(SHEETS.SHARES, existing._row, { enc_dek: encDek, perm: perm });
@@ -1080,6 +1042,7 @@ function api_removeShare(token, shareId) {
         readAll_(SHEETS.SHARES).filter(function (r) { return String(r.owner_id) === String(row.owner_id) && String(r.perm) === 'write'; }).length <= 1) {
       throw new Error('이 가족 프로필을 관리하는 사람이 나뿐이라 그만 볼 수 없습니다. 먼저 다른 가족을 "보기 + 대신 등록"으로 추가하거나 본인 계정으로 넘겨주세요.');
     }
+    writePolicy_(s.userId, String(row.owner_id), String(row.guardian_id), 'none');
     deleteRows_(SHEETS.SHARES, [row._row]);
     audit_(s.userId, 'share_remove', String(row.owner_id) + '->' + String(row.guardian_id));
     return { ok: true };
@@ -1117,7 +1080,7 @@ function resolveManageable_(session, ownerId) {
  * encDekForMe: 새 프로필의 데이터키를 내 공개키로 암호화한 값 (브라우저에서 만든다)
  */
 function api_createProfile(token, displayName, encDekForMe) {
-  const s = requireSession_(token);
+  const s = requireAdmin_(token);
   displayName = String(displayName || '').trim();
   if (!displayName || displayName.length > 20) throw new Error('이름(호칭)을 1~20자로 입력해 주세요.');
   assertB64_(encDekForMe, 'encDek');
@@ -1132,7 +1095,7 @@ function api_createProfile(token, displayName, encDekForMe) {
       enc_dek: encDekForMe, perm: 'write', created_at: nowIso_()
     });
     audit_(s.userId, 'profile_create', userId);
-    return { ownerId: userId, admins: adminsWithKeys_(s.userId) }; // 공동 관리자에게도 바로 연결하도록
+    return { ownerId: userId }; // 공동 관리자 연결은 api_syncAccess 가 이어서 처리
   });
 }
 
@@ -1181,12 +1144,204 @@ function api_claimProfile(token, ownerId, req) {
   });
 }
 
+// ===================== Access.gs =====================
+/**
+ * 접근 권한 엔진 — "정책(원하는 상태)"과 "열쇠(실제 상태)"를 분리하고 자동으로 맞춘다.
+ *
+ *  1) 정책
+ *     - 역할: 관리자는 모든 구성원의 기록에 조회·등록(write). (Config ADMIN_USERNAMES)
+ *     - 구성원 간 권한: AccessPolicy 시트 (관리자 콘솔 또는 기록 주인이 정함)
+ *  2) 열쇠: Shares 시트 — 기록 주인의 데이터키를 조회자 공개키로 암호화한 값.
+ *     서버의 모든 기록 접근 검사(resolveOwner_)는 이 열쇠를 기준으로 한다.
+ *  3) 동기화 (reconcileAccess_)
+ *     - 정책에 없는 열쇠 → 즉시 삭제 (관리자 해제, 권한 '없음' 등) — 서버만으로 처리
+ *     - 권한 수준만 다른 열쇠 → 즉시 수정 — 서버만으로 처리
+ *     - 정책에는 있는데 열쇠가 없음 → '대기'. 데이터키는 브라우저에만 있으므로
+ *       키를 가진 사람(기록 주인 또는 이미 열쇠가 있는 관리자)의 앱이 로그인·콘솔 조작 때
+ *       api_syncAccess → api_fulfillAccess 로 자동 발급한다.
+ *       조회자가 아직 첫 로그인 전(공개키 없음)이면 첫 로그인 이후 자동으로 이어진다.
+ *
+ *  안전장치: 대신 관리하는 구성원(로그인 없음)은 데이터키가 열쇠에만 있으므로,
+ *  남는 열쇠가 하나도 없게 되는 삭제는 하지 않는다 (기록 영구 손실 방지).
+ */
+
+const ACCESS_PERMS = ['none', 'read', 'write'];
+
+/** 사용자·역할·정책·열쇠를 한 번에 읽어 원하는 상태를 계산한다 */
+function accessModel_() {
+  const users = readAll_(SHEETS.USERS);
+  const adminNames = adminUsernames_();
+  const byId = {}, isAdmin = {};
+  users.forEach(function (u) {
+    const id = String(u.user_id);
+    byId[id] = u;
+    if (!isManaged_(u) && adminNames.indexOf(String(u.username)) !== -1) isAdmin[id] = true;
+  });
+
+  const desired = {};
+  readAll_(SHEETS.POLICY).forEach(function (p) {
+    const o = String(p.owner_id), v = String(p.viewer_id), perm = String(p.perm);
+    if (!byId[o] || !byId[v] || o === v || isManaged_(byId[v]) || SHARE_PERMS.indexOf(perm) === -1) return;
+    desired[o + '|' + v] = { ownerId: o, viewerId: v, perm: perm, source: 'policy' };
+  });
+  Object.keys(isAdmin).forEach(function (a) {
+    users.forEach(function (u) {
+      const o = String(u.user_id);
+      if (o !== a) desired[o + '|' + a] = { ownerId: o, viewerId: a, perm: 'write', source: 'role' };
+    });
+  });
+  return { users: users, byId: byId, isAdmin: isAdmin, desired: desired, shares: readAll_(SHEETS.SHARES) };
+}
+
+/** userId 가 ownerId 의 데이터키를 가지고 있는가 (본인이거나 열쇠를 받은 사람) */
+function holdsKey_(m, ownerId, userId, shares) {
+  if (ownerId === userId && m.byId[ownerId] && !isManaged_(m.byId[ownerId])) return true;
+  return (shares || m.shares).some(function (r) { return String(r.owner_id) === ownerId && String(r.guardian_id) === userId; });
+}
+
+/**
+ * 열쇠를 정책에 맞춘다. 반드시 withLock_ 안에서 호출.
+ * 반환: { model, kept(남은 열쇠), pending(발급 대기 목록), removed, changed }
+ */
+function reconcileAccess_(actorId) {
+  const m = accessModel_();
+  const seen = {}, keep = [], drop = [];
+  m.shares.forEach(function (r) {
+    const k = String(r.owner_id) + '|' + String(r.guardian_id);
+    if (m.desired[k] && !seen[k]) { seen[k] = true; keep.push(r); } else drop.push(r);
+  });
+
+  // 대신 관리하는 구성원: 남는 열쇠가 없으면 삭제하지 않는다
+  const rescued = drop.filter(function (r) {
+    const o = String(r.owner_id);
+    return m.byId[o] && isManaged_(m.byId[o]) && !keep.some(function (x) { return String(x.owner_id) === o; });
+  });
+  rescued.forEach(function (r) { keep.push(r); });
+  const removeRows = drop.filter(function (r) { return rescued.indexOf(r) === -1; });
+
+  let changed = 0;
+  keep.forEach(function (r) {
+    const d = m.desired[String(r.owner_id) + '|' + String(r.guardian_id)];
+    if (d && String(r.perm) !== d.perm) { updateRow_(SHEETS.SHARES, r._row, { perm: d.perm }); r.perm = d.perm; changed++; }
+  });
+  if (removeRows.length) deleteRows_(SHEETS.SHARES, removeRows.map(function (r) { return r._row; }));
+  if (removeRows.length || changed) {
+    audit_(actorId, 'access_reconcile', '해제 ' + removeRows.length + ' / 변경 ' + changed);
+  }
+
+  const pending = Object.keys(m.desired)
+    .filter(function (k) { return !seen[k]; })
+    .map(function (k) { return m.desired[k]; });
+  return { model: m, kept: keep, pending: pending, removed: removeRows.length, changed: changed };
+}
+
+/** 각 권한 쌍의 상태 (콘솔 표시용) */
+function accessStatus_(m, kept, pending) {
+  const list = [];
+  kept.forEach(function (r) {
+    const k = String(r.owner_id) + '|' + String(r.guardian_id), d = m.desired[k];
+    list.push({
+      ownerId: String(r.owner_id), viewerId: String(r.guardian_id), perm: String(r.perm),
+      source: d ? d.source : 'orphan', state: d ? 'active' : 'orphan'
+    });
+  });
+  pending.forEach(function (p) {
+    const viewer = m.byId[p.viewerId];
+    const canIssue = m.users.some(function (u) { return holdsKey_(m, p.ownerId, String(u.user_id), kept); });
+    list.push({
+      ownerId: p.ownerId, viewerId: p.viewerId, perm: p.perm, source: p.source,
+      state: !viewer.public_key ? 'wait_viewer'
+        : (!isManaged_(m.byId[p.ownerId]) && !m.byId[p.ownerId].public_key) ? 'wait_owner'
+        : (canIssue ? 'wait_holder' : 'no_holder')
+    });
+  });
+  return list;
+}
+
+/**
+ * 로그인 직후·콘솔 조작 후 브라우저가 호출: 정책을 맞추고, 내가 발급해 줄 수 있는 열쇠 목록을 돌려준다.
+ */
+function api_syncAccess(token) {
+  const s = requireSession_(token);
+  return withLock_(function () {
+    const r = reconcileAccess_(s.userId);
+    const tasks = r.pending.filter(function (p) {
+      const viewer = r.model.byId[p.viewerId];
+      return viewer.public_key && holdsKey_(r.model, p.ownerId, s.userId, r.kept);
+    }).map(function (p) {
+      return { ownerId: p.ownerId, viewerId: p.viewerId, perm: p.perm, publicKey: String(r.model.byId[p.viewerId].public_key) };
+    });
+    return { tasks: tasks, pending: r.pending.length, removed: r.removed, changed: r.changed };
+  });
+}
+
+/** 브라우저가 암호화한 열쇠를 등록. 정책에 있는 것만, 키를 가진 사람만 발급할 수 있다. */
+function api_fulfillAccess(token, items) {
+  const s = requireSession_(token);
+  if (!Array.isArray(items) || items.length > 500) throw new Error('잘못된 요청입니다.');
+  return withLock_(function () {
+    const m = accessModel_();
+    let added = 0;
+    items.forEach(function (it) {
+      const o = String(it.ownerId), v = String(it.viewerId), d = m.desired[o + '|' + v];
+      assertB64_(it.encDek, 'encDek');
+      if (!d) throw new Error('정책에 없는 권한입니다.');
+      if (!holdsKey_(m, o, s.userId)) throw new Error('이 기록의 열쇠를 발급할 권한이 없습니다.');
+      if (m.shares.some(function (r) { return String(r.owner_id) === o && String(r.guardian_id) === v; })) return; // 이미 있음
+      const row = {
+        share_id: newId_('s'), owner_id: o, guardian_id: v, enc_dek: it.encDek, perm: d.perm, created_at: nowIso_()
+      };
+      appendRow_(SHEETS.SHARES, row);
+      m.shares.push(row);
+      added++;
+    });
+    if (added) audit_(s.userId, 'access_grant', added + '건');
+    return { added: added };
+  });
+}
+
+/** 구성원 간 정책 쓰기 (perm: none/read/write). 호출하는 쪽에서 권한 확인과 withLock_ 을 한다. */
+function writePolicy_(actorId, ownerId, viewerId, perm) {
+  if (ACCESS_PERMS.indexOf(perm) === -1) throw new Error('잘못된 권한입니다.');
+  const rows = readAll_(SHEETS.POLICY).filter(function (p) {
+    return String(p.owner_id) === ownerId && String(p.viewer_id) === viewerId;
+  });
+  if (perm === 'none') {
+    if (rows.length) deleteRows_(SHEETS.POLICY, rows.map(function (r) { return r._row; }));
+  } else if (rows.length) {
+    updateRow_(SHEETS.POLICY, rows[0]._row, { perm: perm, updated_at: nowIso_(), updated_by: actorId });
+    if (rows.length > 1) deleteRows_(SHEETS.POLICY, rows.slice(1).map(function (r) { return r._row; }));
+  } else {
+    appendRow_(SHEETS.POLICY, { owner_id: ownerId, viewer_id: viewerId, perm: perm, updated_at: nowIso_(), updated_by: actorId });
+  }
+  audit_(actorId, 'policy_set', ownerId + ' -> ' + viewerId + ' ' + perm);
+}
+
+/**
+ * 이전 버전(열쇠만 있던 시절)의 구성원 간 공유를 정책으로 옮긴다 — 업그레이드 시 1회.
+ * 관리자 열쇠는 역할에서 나오므로 옮기지 않는다.
+ */
+function migrateSharesToPolicy_() {
+  if (readAll_(SHEETS.POLICY).length) return;
+  const adminNames = adminUsernames_();
+  const users = {};
+  readAll_(SHEETS.USERS).forEach(function (u) { users[String(u.user_id)] = u; });
+  readAll_(SHEETS.SHARES).forEach(function (r) {
+    const g = users[String(r.guardian_id)];
+    if (!g || adminNames.indexOf(String(g.username)) !== -1) return;
+    appendRow_(SHEETS.POLICY, {
+      owner_id: String(r.owner_id), viewer_id: String(r.guardian_id), perm: String(r.perm),
+      updated_at: nowIso_(), updated_by: 'migration'
+    });
+  });
+}
+
 // ===================== Admin.gs =====================
 /**
  * 관리자 콘솔 (앱 안에서 관리자만 사용)
  *  - 가족 구성원 목록과 역할(관리자 지정/해제)
- *  - 누가 누구의 기록을 볼 수 있는지 (조회 권한) — 실제 권한 부여/해제는 Shares.gs 의
- *    api_addGuardian / api_removeShare 를 쓴다 (데이터키 암호화는 브라우저에서 해야 하므로)
+ *  - 누가 누구의 기록을 볼 수 있는지 (조회 권한 정책) — 정책만 바꾸면 Access.gs 의 동기화가
+ *    열쇠를 즉시 회수하거나, 키를 가진 사람의 앱에서 자동으로 발급한다
  *  - 가입 허용, 초대코드
  *
  * 관리자 목록은 Config 시트 ADMIN_USERNAMES 에 저장되지만, 시트를 직접 고칠 필요 없이 여기서 바꾼다.
@@ -1202,19 +1357,17 @@ function requireAdmin_(token) {
 /** 콘솔 화면에 필요한 정보 (기록 내용은 없음 — 누가 있고, 누가 누구를 볼 수 있는지만) */
 function api_adminState(token) {
   requireAdmin_(token);
+  const sync = withLock_(function () { return reconcileAccess_(''); });
   const users = readAll_(SHEETS.USERS).map(function (u) {
     return {
       userId: String(u.user_id), username: String(u.username), name: String(u.display_name || u.username),
       managed: isManaged_(u), isAdmin: isAdminUser_(u), publicKey: u.public_key ? String(u.public_key) : '',
-      createdAt: String(u.created_at || '')
+      createdAt: String(u.created_at || ''), lastLoginAt: String(u.last_login_at || '')
     };
-  });
-  const shares = readAll_(SHEETS.SHARES).map(function (r) {
-    return { shareId: String(r.share_id), ownerId: String(r.owner_id), guardianId: String(r.guardian_id), perm: String(r.perm) };
   });
   return {
     users: users,
-    shares: shares,
+    access: accessStatus_(sync.model, sync.kept, sync.pending),
     settings: {
       allowSignup: String(getConfig_('ALLOW_SIGNUP', 'TRUE')).toUpperCase() === 'TRUE',
       inviteCode: String(getConfig_('INVITE_CODE', ''))
@@ -1222,20 +1375,62 @@ function api_adminState(token) {
   };
 }
 
-/** 관리자 지정/해제 */
+/**
+ * 관리자 지정/해제. 역할이 바뀌면 동기화가 이어서 처리한다.
+ *  - 지정: 모든 구성원 기록에 대한 열쇠가 '대기'가 되고, 키를 가진 앱(지정한 관리자 포함)이 곧바로 발급
+ *  - 해제: 역할로 받았던 열쇠는 즉시 회수. 콘솔에서 따로 준 구성원 간 권한(정책)은 유지
+ */
 function api_adminSetRole(token, userId, makeAdmin) {
   const s = requireAdmin_(token);
-  const u = findRows_(SHEETS.USERS, 'user_id', String(userId))[0];
-  if (!u) throw new Error('해당 사용자를 찾을 수 없습니다.');
-  if (isManaged_(u)) throw new Error('대신 관리하는 가족은 관리자가 될 수 없어요. 먼저 본인 계정을 만들어 주세요.');
-  const list = adminUsernames_();
-  const name = String(u.username);
-  let next = list.filter(function (x) { return x !== name; });
-  if (makeAdmin) next.push(name);
-  if (!next.length) throw new Error('관리자는 최소 1명 있어야 합니다.');
-  setConfig_('ADMIN_USERNAMES', next.join(','));
-  audit_(s.userId, makeAdmin ? 'admin_grant' : 'admin_revoke', String(userId));
-  return { ok: true };
+  return withLock_(function () {
+    const u = findRows_(SHEETS.USERS, 'user_id', String(userId))[0];
+    if (!u) throw new Error('해당 사용자를 찾을 수 없습니다.');
+    if (isManaged_(u)) throw new Error('대신 관리하는 구성원은 관리자가 될 수 없습니다. 먼저 본인 계정으로 전환하세요.');
+    if (makeAdmin && !u.public_key) throw new Error('첫 로그인 이후에 관리자로 지정할 수 있습니다.');
+    const list = adminUsernames_();
+    const name = String(u.username);
+    const next = list.filter(function (x) { return x !== name; });
+    if (makeAdmin) next.push(name);
+    if (!next.length) throw new Error('관리자는 최소 1명 있어야 합니다.');
+    if (!makeAdmin) {
+      // 해제로 대신 관리 구성원의 열쇠 보유자가 사라지면 기록을 잃으므로 막는다
+      const others = readAll_(SHEETS.USERS).filter(function (x) {
+        return next.indexOf(String(x.username)) !== -1 && x.public_key;
+      }).map(function (x) { return String(x.user_id); });
+      const shares = readAll_(SHEETS.SHARES);
+      const orphan = readAll_(SHEETS.USERS).filter(isManaged_).filter(function (p) {
+        return !shares.some(function (r) { return String(r.owner_id) === String(p.user_id) && others.indexOf(String(r.guardian_id)) !== -1; });
+      });
+      if (orphan.length) {
+        throw new Error('다른 관리자가 아직 ' + orphan.map(function (p) { return p.display_name; }).join(', ') +
+          ' 구성원의 열쇠를 받지 못해 해제할 수 없습니다. 다른 관리자가 한 번 로그인한 뒤 다시 시도하세요.');
+      }
+    }
+    setConfig_('ADMIN_USERNAMES', next.join(','));
+    audit_(s.userId, makeAdmin ? 'admin_grant' : 'admin_revoke', String(userId));
+    const r = reconcileAccess_(s.userId);
+    return { ok: true, pending: r.pending.length, removed: r.removed };
+  });
+}
+
+/**
+ * 구성원 간 조회 권한 정책 설정 (perm: none/read/write)
+ * 관리자는 역할로 항상 전체 권한이므로 대상이 아니다.
+ */
+function api_adminSetAccess(token, ownerId, viewerId, perm) {
+  const s = requireAdmin_(token);
+  ownerId = String(ownerId); viewerId = String(viewerId);
+  return withLock_(function () {
+    const owner = findRows_(SHEETS.USERS, 'user_id', ownerId)[0];
+    const viewer = findRows_(SHEETS.USERS, 'user_id', viewerId)[0];
+    if (!owner || !viewer) throw new Error('해당 사용자를 찾을 수 없습니다.');
+    if (ownerId === viewerId) throw new Error('본인 기록에는 권한을 설정할 수 없습니다.');
+    if (isManaged_(viewer)) throw new Error('대신 관리하는 구성원은 로그인하지 않으므로 조회자가 될 수 없습니다.');
+    if (isAdminUser_(viewer)) throw new Error('관리자는 역할에 따라 항상 전체 권한을 가집니다.');
+    writePolicy_(s.userId, ownerId, viewerId, perm);
+    const r = reconcileAccess_(s.userId);
+    return { ok: true, pending: r.pending.length };
+  });
 }
 
 /** 가입 허용 / 초대코드 새로 만들기 */
@@ -1248,6 +1443,33 @@ function api_adminSettings(token, req) {
     allowSignup: String(getConfig_('ALLOW_SIGNUP', 'TRUE')).toUpperCase() === 'TRUE',
     inviteCode: String(getConfig_('INVITE_CODE', ''))
   };
+}
+
+/** 활동 기록 (최근 순). 기록 내용은 없고 "누가 언제 무엇을 했는지"만 보여준다. */
+const AUDIT_LABELS = {
+  signup: '가입', login: '로그인', login_failed: '로그인 실패', change_password: '비밀번호 변경', recovery_reset: '복구코드로 비밀번호 재설정',
+  record_create: '기록 등록', record_create_batch: '기록 여러 건 등록', record_delete: '기록 삭제',
+  guardian_add: '조회 권한 부여(본인 설정)', share_remove: '조회 권한 해제', policy_set: '권한 정책 변경',
+  access_grant: '열쇠 자동 발급', access_reconcile: '권한 자동 정리', chat_share: '상담 보내기', chat_unshare: '상담 보내기 취소',
+  profile_create: '대신 관리 가족 추가', profile_claim: '본인 계정으로 전환',
+  admin_grant: '관리자 지정', admin_revoke: '관리자 해제', admin_settings: '가입 설정 변경'
+};
+
+function api_adminAudit(token, limit) {
+  requireAdmin_(token);
+  const names = usernameMap_();
+  const rows = readAll_(SHEETS.AUDIT);
+  const n = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  return rows.slice(-n).reverse().map(function (r) {
+    const detail = /^(policy_set|admin_grant|admin_revoke|profile_create|profile_claim|share_remove|guardian_add|access_grant|access_reconcile)$/.test(String(r.action))
+      ? String(r.detail || '').replace(/u_[0-9a-f]+/g, function (id) { return names[id] || '?'; })
+          .replace(/ (read|write|none)$/, function (m, p) { return ' : ' + ({ read: '조회', write: '조회·등록', none: '없음' })[p]; })
+      : '';
+    return {
+      time: String(r.time), user: names[r.user_id] || (r.user_id ? '(알 수 없음)' : '시스템'),
+      action: AUDIT_LABELS[r.action] || String(r.action), detail: detail
+    };
+  });
 }
 
 // ===================== Gemini.gs =====================

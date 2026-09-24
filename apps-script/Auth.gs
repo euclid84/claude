@@ -31,7 +31,7 @@ function api_signupInfo() {
 
 /* ---------------- 관리자 ----------------
  * 관리자(예: 아들·사위·남편)는 가족 모두의 기록과 상담을 함께 본다.
- * 가족이 로그인하면 관리자에게 자동으로 연결(Shares, 권한 write)된다. 가족끼리는 서로 볼 수 없다.
+ * 실제 연결(열쇠 발급)은 Access.gs 의 동기화가 맡는다. 가족끼리는 정책을 주지 않으면 서로 볼 수 없다.
  */
 function adminUsernames_() {
   return String(getConfig_('ADMIN_USERNAMES', '')).split(',')
@@ -39,50 +39,6 @@ function adminUsernames_() {
 }
 
 function isAdminUser_(user) { return adminUsernames_().indexOf(String(user.username)) !== -1; }
-
-/** 공개키가 있는 관리자 목록 (except: 제외할 user_id) */
-function adminsWithKeys_(except) {
-  const names = adminUsernames_();
-  return readAll_(SHEETS.USERS)
-    .filter(function (u) { return names.indexOf(String(u.username)) !== -1 && u.public_key && String(u.user_id) !== String(except); })
-    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
-}
-
-/**
- * 내가 대신 관리하는 가족 프로필 중, 다른(공동) 관리자에게 아직 연결되지 않은 것
- * → 로그인한 사람이 브라우저에서 프로필 데이터키를 그 관리자 공개키로 암호화해 연결한다.
- */
-function missingAdminLinksForProfiles_(user) {
-  const admins = adminsWithKeys_(user.user_id);
-  if (!admins.length) return [];
-  const managedIds = readAll_(SHEETS.USERS).filter(isManaged_).map(function (u) { return String(u.user_id); });
-  const shares = readAll_(SHEETS.SHARES);
-  return shares
-    .filter(function (r) {
-      return String(r.guardian_id) === String(user.user_id) && String(r.perm) === 'write' && managedIds.indexOf(String(r.owner_id)) !== -1;
-    })
-    .map(function (r) {
-      return {
-        ownerId: String(r.owner_id),
-        admins: admins.filter(function (a) {
-          return !shares.some(function (x) { return String(x.owner_id) === String(r.owner_id) && String(x.guardian_id) === a.userId; });
-        })
-      };
-    })
-    .filter(function (x) { return x.admins.length; });
-}
-
-/** 이 사용자의 기록이 아직 연결되지 않은 관리자들 (공개키가 있는 관리자만) */
-function missingAdmins_(user) {
-  const names = adminUsernames_();
-  const shares = readAll_(SHEETS.SHARES).filter(function (r) { return String(r.owner_id) === String(user.user_id); });
-  return readAll_(SHEETS.USERS)
-    .filter(function (u) {
-      return names.indexOf(String(u.username)) !== -1 && String(u.user_id) !== String(user.user_id) && u.public_key &&
-        !shares.some(function (r) { return String(r.guardian_id) === String(u.user_id); });
-    })
-    .map(function (u) { return { userId: String(u.user_id), username: String(u.username), publicKey: String(u.public_key) }; });
-}
 
 /**
  * 회원가입
@@ -155,9 +111,7 @@ function api_login(username, authKey) {
     wrappedDek: String(user.wrapped_dek),
     encPrivateKey: user.public_key ? String(user.enc_private_key) : '',
     publicKey: user.public_key ? String(user.public_key) : '',
-    isAdmin: isAdminUser_(user),
-    missingAdmins: missingAdmins_(user),
-    profileLinks: missingAdminLinksForProfiles_(user)
+    isAdmin: isAdminUser_(user)
   };
 }
 

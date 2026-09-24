@@ -1,7 +1,8 @@
 /**
  * 보호자(가족) 공유
  *
- * 관리자: Config 시트 ADMIN_USERNAMES. 가족이 로그인하면 관리자에게 자동 연결된다 (Auth.gs missingAdmins_).
+ * 관리자: Config 시트 ADMIN_USERNAMES. 누가 누구를 볼지는 Access.gs 의 정책 엔진이 정하고,
+ * 여기 있는 API는 그 정책을 쓰거나(기록 주인의 설정) 열쇠를 읽는 역할을 한다.
  *
  * 두 가지 가족 형태
  *  1) 본인이 직접 쓰는 가족: 각자 가입 → 기록 주인이 설정에서 보호자를 추가한다.
@@ -77,7 +78,11 @@ function api_addGuardian(token, guardianId, encDek, perm, ownerId) {
   if (guardianId === owner) throw new Error('본인은 보호자로 추가할 수 없습니다.');
   const guardian = findRows_(SHEETS.USERS, 'user_id', guardianId)[0];
   if (!guardian) throw new Error('해당 사용자를 찾을 수 없습니다.');
+  if (!guardian.public_key) throw new Error('그 분이 앱에 한 번 로그인한 뒤에 추가할 수 있습니다.');
+  if (isManaged_(guardian)) throw new Error('대신 관리하는 구성원에게는 권한을 줄 수 없습니다.');
   return withLock_(function () {
+    writePolicy_(s.userId, owner, guardianId, perm);
+    reconcileAccess_(s.userId);
     const existing = findShare_(owner, guardianId);
     if (existing) {
       updateRow_(SHEETS.SHARES, existing._row, { enc_dek: encDek, perm: perm });
@@ -142,6 +147,7 @@ function api_removeShare(token, shareId) {
         readAll_(SHEETS.SHARES).filter(function (r) { return String(r.owner_id) === String(row.owner_id) && String(r.perm) === 'write'; }).length <= 1) {
       throw new Error('이 가족 프로필을 관리하는 사람이 나뿐이라 그만 볼 수 없습니다. 먼저 다른 가족을 "보기 + 대신 등록"으로 추가하거나 본인 계정으로 넘겨주세요.');
     }
+    writePolicy_(s.userId, String(row.owner_id), String(row.guardian_id), 'none');
     deleteRows_(SHEETS.SHARES, [row._row]);
     audit_(s.userId, 'share_remove', String(row.owner_id) + '->' + String(row.guardian_id));
     return { ok: true };
@@ -179,7 +185,7 @@ function resolveManageable_(session, ownerId) {
  * encDekForMe: 새 프로필의 데이터키를 내 공개키로 암호화한 값 (브라우저에서 만든다)
  */
 function api_createProfile(token, displayName, encDekForMe) {
-  const s = requireSession_(token);
+  const s = requireAdmin_(token);
   displayName = String(displayName || '').trim();
   if (!displayName || displayName.length > 20) throw new Error('이름(호칭)을 1~20자로 입력해 주세요.');
   assertB64_(encDekForMe, 'encDek');
@@ -194,7 +200,7 @@ function api_createProfile(token, displayName, encDekForMe) {
       enc_dek: encDekForMe, perm: 'write', created_at: nowIso_()
     });
     audit_(s.userId, 'profile_create', userId);
-    return { ownerId: userId, admins: adminsWithKeys_(s.userId) }; // 공동 관리자에게도 바로 연결하도록
+    return { ownerId: userId }; // 공동 관리자 연결은 api_syncAccess 가 이어서 처리
   });
 }
 
