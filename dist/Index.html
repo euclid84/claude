@@ -1629,7 +1629,8 @@ function viewSettings() {
     header('설정', true) +
     (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
     (S.me.isAdmin
-      ? '<div class="card click" id="guard"><h3>👪 가족 관리</h3><p class="muted">가족 한눈에 보기 · 가족 추가 · 관리하는 가족</p></div>'
+      ? '<div class="card click" id="console"><h3>🛠 관리자 콘솔</h3><p class="muted">관리자 지정 · 누가 누구 기록을 볼지 · 가입 설정</p></div>' +
+        '<div class="card click" id="guard"><h3>👪 가족 관리</h3><p class="muted">가족 한눈에 보기 · 가족 추가 · 관리하는 가족</p></div>'
       : '<div class="card click" id="guard"><h3>👪 내 기록을 함께 보는 사람</h3><p class="muted">관리자 · 내가 추가한 가족</p></div>') +
     '<div class="card"><h3>🔠 글씨 크기</h3><div class="seg">' + FONT_SIZES.map(function (f) {
       return '<button data-fs="' + f[0] + '" class="' + (fontSize() === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
@@ -1640,6 +1641,7 @@ function viewSettings() {
   );
   bindBack(viewHome);
   on('#guard', 'click', function () { viewGuardians().catch(showError); });
+  on('#console', 'click', function () { viewAdminConsole().catch(showError); });
   on('#doc', 'click', function () { viewDoctor(false); });
   on('#pw', 'click', viewChangePassword);
   on('#logout', 'click', doLogout);
@@ -1776,6 +1778,133 @@ async function viewGuardians() {
       toast('해제했습니다.');
       await viewGuardians();
     } catch (e) { showError(e); }
+  });
+}
+
+/* ---------------- 관리자 콘솔 ---------------- */
+
+const PERM_OPTS = [['none', '안 보임'], ['read', '보기'], ['write', '보기+등록']];
+
+/** 내가 데이터키를 가진(=관리할 수 있는) 사람의 키. 본인은 S.me.dekRaw */
+function dekRawOf(userId) {
+  if (userId === S.me.userId) return S.me.dekRaw;
+  const p = S.people.find(function (x) { return x.ownerId === userId; });
+  return p ? p.dekRaw : null;
+}
+
+/** 새 관리자에게 내가 관리하는 모든 가족 기록을 연결 (지정 즉시 가족 전체를 볼 수 있게) */
+async function linkAllToAdmin(admin, st) {
+  const has = function (ownerId) {
+    return st.shares.some(function (r) { return r.ownerId === ownerId && r.guardianId === admin.userId && r.perm === 'write'; });
+  };
+  const owners = [S.me.userId].concat(S.people.filter(function (p) { return p.ownerId; }).map(function (p) { return p.ownerId; }));
+  for (const ownerId of owners) {
+    if (ownerId === admin.userId || has(ownerId)) continue;
+    const raw = dekRawOf(ownerId);
+    if (!raw) continue;
+    await call('api_addGuardian', S.token, admin.userId, await Crypt.encryptForPublicKey(admin.publicKey, raw), 'write',
+      ownerId === S.me.userId ? null : ownerId);
+  }
+}
+
+async function viewAdminConsole(selOwner) {
+  loading();
+  const st = await call('api_adminState', S.token);
+  done();
+  const users = st.users;
+  const byId = {}; users.forEach(function (u) { byId[u.userId] = u; });
+  const adminCount = users.filter(function (u) { return u.isAdmin; }).length;
+  const owners = users.filter(function (u) { return dekRawOf(u.userId); });
+  const waiting = users.filter(function (u) { return !dekRawOf(u.userId) && !u.managed; });
+  const sel = selOwner && byId[selOwner] && dekRawOf(selOwner) ? selOwner : S.me.userId;
+  const viewers = users.filter(function (u) { return u.userId !== sel && !u.managed; });
+  const shareOf = function (ownerId, guardianId) {
+    return st.shares.find(function (r) { return r.ownerId === ownerId && r.guardianId === guardianId; });
+  };
+  const label = function (u) { return u.userId === S.me.userId ? '나 (' + u.name + ')' : u.name; };
+
+  render(
+    header('🛠 관리자 콘솔', true) +
+
+    '<div class="card"><h3>👥 가족 구성원 (' + users.length + ')</h3>' +
+    '<ul class="tests">' + users.map(function (u) {
+      const kind = u.managed ? '대신 관리 (로그인 없음)' : (u.isAdmin ? '👑 관리자' : '직접 가입') + (u.publicKey ? '' : ' · 아직 로그인 전');
+      let btn = '';
+      if (!u.managed) {
+        btn = u.isAdmin
+          ? '<button class="danger" data-role="' + esc(u.userId) + '" data-to="0"' + (adminCount <= 1 ? ' disabled' : '') + '>관리자 해제</button>'
+          : '<button class="soft" data-role="' + esc(u.userId) + '" data-to="1"' + (u.publicKey ? '' : ' disabled') + '>관리자로 지정</button>';
+      }
+      return '<li style="cursor:default"><div class="nm">' + esc(label(u)) +
+        (u.name !== u.username && !u.managed ? ' <span class="muted">@' + esc(u.username) + '</span>' : '') +
+        '<small>' + esc(kind) + '</small></div>' + btn + '</li>';
+    }).join('') + '</ul>' +
+    '<p class="muted">관리자는 가족 모두의 기록을 볼 수 있어요. 관리자로 지정하면 바로 가족 전체가 연결돼요.</p></div>' +
+
+    '<div class="card"><h3>🔐 조회 권한</h3>' +
+    '<p class="muted"><b>누구의 기록을</b> 누가 볼 수 있는지 정해요.</p>' +
+    '<div class="chips">' + owners.map(function (u) {
+      return '<button class="chip' + (u.userId === sel ? ' on' : '') + '" data-owner="' + esc(u.userId) + '">' + esc(label(u)) + '</button>';
+    }).join('') + '</div>' +
+    '<ul class="tests">' + viewers.map(function (v) {
+      const sh = shareOf(sel, v.userId);
+      const cur = sh ? sh.perm : 'none';
+      let right;
+      if (v.isAdmin) right = '<span class="muted">👑 관리자 · 항상 볼 수 있음</span>';
+      else if (!v.publicKey) right = '<span class="muted">로그인 후 설정 가능</span>';
+      else right = '<div class="seg" style="grid-template-columns:repeat(3,auto);gap:6px">' + PERM_OPTS.map(function (o) {
+        return '<button style="min-height:48px;padding:6px 10px;font-size:.85em" class="' + (cur === o[0] ? 'on' : '') +
+          '" data-perm="' + o[0] + '" data-v="' + esc(v.userId) + '">' + o[1] + '</button>';
+      }).join('') + '</div>';
+      return '<li style="cursor:default;flex-wrap:wrap"><div class="nm">' + esc(label(v)) + '</div>' + right + '</li>';
+    }).join('') + '</ul>' +
+    (waiting.length ? '<p class="muted">연결 대기: ' + esc(waiting.map(function (u) { return u.name; }).join(', ')) +
+      ' — 그분이 한 번 로그인하면 여기서 설정할 수 있어요.</p>' : '') + '</div>' +
+
+    '<div class="card"><h3>⚙️ 가입 설정</h3>' +
+    '<label class="check"><input type="checkbox" id="allow"' + (st.settings.allowSignup ? ' checked' : '') + '>새 가족 가입 허용</label>' +
+    '<p>초대코드: <b style="font-size:1.2em;letter-spacing:2px">' + esc(st.settings.inviteCode) + '</b></p>' +
+    '<button class="block" id="rotate">🔄 초대코드 새로 만들기</button>' +
+    '<p class="muted" style="margin-top:8px">가족 가입이 끝나면 가입 허용을 꺼두세요.</p></div>'
+  );
+  bindBack(viewSettings);
+
+  on('[data-owner]', 'click', function () { viewAdminConsole(this.getAttribute('data-owner')).catch(showError); });
+  on('[data-role]', 'click', async function () {
+    const u = byId[this.getAttribute('data-role')], make = this.getAttribute('data-to') === '1';
+    const msg = make ? nim(u.name) + '을 관리자로 지정할까요? 가족 모두의 기록을 볼 수 있게 됩니다.'
+      : nim(u.name) + '의 관리자 역할을 해제할까요? (이미 볼 수 있던 기록은 아래 조회 권한에서 조정하세요)';
+    if (!(await confirmBox(msg, make ? '지정' : '해제'))) return;
+    try {
+      loading('설정하는 중…');
+      await call('api_adminSetRole', S.token, u.userId, make);
+      if (make) await linkAllToAdmin(u, st);
+      if (u.userId === S.me.userId && !make) S.me.isAdmin = false;
+      done(); toast(make ? nim(u.name) + '이 관리자가 됐어요.' : '관리자 역할을 해제했어요.');
+      if (S.me.isAdmin) await viewAdminConsole(sel); else viewSettings();
+    } catch (e) { showError(e); }
+  });
+  on('[data-perm]', 'click', async function () {
+    const v = byId[this.getAttribute('data-v')], perm = this.getAttribute('data-perm');
+    const sh = shareOf(sel, v.userId);
+    if ((sh ? sh.perm : 'none') === perm) return;
+    try {
+      loading('저장하는 중…');
+      if (perm === 'none') await call('api_removeShare', S.token, sh.shareId);
+      else await call('api_addGuardian', S.token, v.userId, await Crypt.encryptForPublicKey(v.publicKey, dekRawOf(sel)), perm,
+        sel === S.me.userId ? null : sel);
+      done(); toast('저장했어요.');
+      await viewAdminConsole(sel);
+    } catch (e) { showError(e); }
+  });
+  on('#allow', 'change', async function () {
+    try { loading(); await call('api_adminSettings', S.token, { allowSignup: this.checked }); done(); toast(this.checked ? '가입을 허용했어요.' : '가입을 막았어요.'); }
+    catch (e) { showError(e); }
+  });
+  on('#rotate', 'click', async function () {
+    if (!(await confirmBox('초대코드를 새로 만들까요? 예전 코드로는 가입할 수 없게 돼요.', '새로 만들기'))) return;
+    try { loading(); await call('api_adminSettings', S.token, { rotateInvite: true }); done(); await viewAdminConsole(sel); }
+    catch (e) { showError(e); }
   });
 }
 
