@@ -17,6 +17,7 @@ const SHEETS = {
   RECORDS: 'Records',
   CHATS: 'Chats',
   PROFILES: 'DoctorProfiles',
+  SHARES: 'Shares',
   AUDIT: 'AuditLog'
 };
 
@@ -27,11 +28,13 @@ const HEADERS = {
     'user_id', 'username', 'created_at',
     'kdf_salt', 'kdf_iter', 'auth_salt', 'auth_hash', 'wrapped_dek',
     'rc_kdf_salt', 'rc_auth_salt', 'rc_auth_hash', 'wrapped_dek_rc',
-    'failed_count', 'locked_until', 'last_login_at'
+    'failed_count', 'locked_until', 'last_login_at',
+    'public_key', 'enc_private_key'
   ],
   Records: ['record_id', 'user_id', 'created_at', 'updated_at', 'enc_data', 'image_ids'],
-  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data'],
+  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id'],
   DoctorProfiles: ['user_id', 'updated_at', 'enc_data'],
+  Shares: ['share_id', 'owner_id', 'guardian_id', 'enc_dek', 'perm', 'created_at'],
   AuditLog: ['time', 'user_id', 'action', 'detail']
 };
 
@@ -62,6 +65,7 @@ const DEFAULT_PRESETS = [
 
 /** 웹앱 진입점 */
 function doGet() {
+  ensureSchema_();
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle(APP_NAME)
@@ -93,6 +97,7 @@ function setup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const props = PropertiesService.getScriptProperties();
   props.setProperty('SPREADSHEET_ID', ss.getId());
+  props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 
   Object.keys(HEADERS).forEach(function (name) {
     let sh = ss.getSheetByName(name);
@@ -134,6 +139,24 @@ function setup() {
   if (blank && ss.getSheets().length > 1 && blank.getLastRow() === 0) ss.deleteSheet(blank);
 
   safeAlert_('초기 설정 완료!\n\n다음 단계: 메뉴 > "2. Gemini API 키 등록"\n초대코드: ' + getConfig_('INVITE_CODE'));
+}
+
+/**
+ * 새 버전에서 추가된 시트/열을 자동으로 만든다 (기존 데이터는 건드리지 않음).
+ * 새 열은 항상 오른쪽 끝에 추가되므로 기존 행과 어긋나지 않는다.
+ */
+const SCHEMA_VERSION = '2';
+function ensureSchema_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
+  const ss = getSs_();
+  Object.keys(HEADERS).forEach(function (name) {
+    const sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    const headers = HEADERS[name];
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  });
+  props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
 
 /** Gemini API 키는 시트가 아니라 스크립트 속성에 보관한다 (시트에 노출되지 않도록) */

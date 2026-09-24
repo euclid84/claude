@@ -2,7 +2,10 @@
  * 진료기록 / 사진 / 질의응답 / 의사 설정 저장
  *
  * 여기로 들어오는 enc_data 와 사진은 모두 브라우저에서 이미 암호화된 값이다.
- * 서버는 "누구의 데이터인지(user_id)"만 확인해서 본인 것만 읽고 쓰게 한다.
+ * 서버는 "누구의 데이터인지(user_id)"와 "보호자 권한(Shares)"만 확인한다.
+ *
+ * 모든 API의 마지막 인자 ownerId: 비우면 본인, 채우면 보호자로서 그 사람의 기록을 다룬다.
+ *   (resolveOwner_ 가 Shares 시트로 권한을 확인한다)
  */
 
 const MAX_CELL_CHARS = 49000;       // 구글시트 셀 한도(50,000자) 여유분
@@ -10,9 +13,9 @@ const MAX_IMAGE_B64_CHARS = 14500000; // 암호화된 사진/PDF 1개 최대 약
 
 /* ---------------- 진료기록 ---------------- */
 
-function api_listRecords(token) {
-  const s = requireSession_(token);
-  return findRows_(SHEETS.RECORDS, 'user_id', s.userId).map(function (r) {
+function api_listRecords(token, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  return findRows_(SHEETS.RECORDS, 'user_id', owner).map(function (r) {
     return {
       recordId: String(r.record_id),
       createdAt: String(r.created_at),
@@ -24,18 +27,19 @@ function api_listRecords(token) {
 }
 
 /** req: { recordId?(수정 시), encData, imageIds: [] } */
-function api_saveRecord(token, req) {
+function api_saveRecord(token, req, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   assertEnc_(req.encData);
   const imageIds = (req.imageIds || []).map(String);
-  imageIds.forEach(function (id) { assertOwnImage_(s.userId, id); });
+  imageIds.forEach(function (id) { assertOwnImage_(owner, id); });
 
   return withLock_(function () {
     if (req.recordId) {
-      const rec = ownRecord_(s.userId, req.recordId);
+      const rec = ownRecord_(owner, req.recordId);
       // 수정하면서 빠진 사진은 휴지통으로
       const oldIds = rec.image_ids ? String(rec.image_ids).split(',') : [];
-      trashIfUnused_(s.userId, oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }), rec.record_id);
+      trashIfUnused_(owner, oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }), rec.record_id);
       updateRow_(SHEETS.RECORDS, rec._row, {
         updated_at: nowIso_(),
         enc_data: req.encData,
@@ -46,10 +50,10 @@ function api_saveRecord(token, req) {
     const recordId = newId_('r');
     const now = nowIso_();
     appendRow_(SHEETS.RECORDS, {
-      record_id: recordId, user_id: s.userId, created_at: now, updated_at: now,
+      record_id: recordId, user_id: owner, created_at: now, updated_at: now,
       enc_data: req.encData, image_ids: imageIds.join(',')
     });
-    audit_(s.userId, 'record_create', recordId);
+    audit_(s.userId, 'record_create', recordId + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordId: recordId };
   });
 }
@@ -58,40 +62,41 @@ function api_saveRecord(token, req) {
  * 여러 건 한 번에 저장 (문자 캡처처럼 한 번에 여러 기록이 나올 때)
  * items: [{ encData, imageIds }]  — 같은 사진을 여러 기록이 함께 가리킬 수 있다.
  */
-function api_saveRecords(token, items) {
+function api_saveRecords(token, items, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   if (!Array.isArray(items) || !items.length || items.length > 100) throw new Error('잘못된 요청입니다.');
   const checked = {};
   items.forEach(function (it) {
     assertEnc_(it.encData);
     (it.imageIds || []).forEach(function (id) {
-      if (!checked[id]) { assertOwnImage_(s.userId, String(id)); checked[id] = true; }
+      if (!checked[id]) { assertOwnImage_(owner, String(id)); checked[id] = true; }
     });
   });
   return withLock_(function () {
     const now = nowIso_();
     const sh = sheet_(SHEETS.RECORDS);
     const rows = items.map(function (it) {
-      const recordId = newId_('r');
       return {
-        record_id: recordId, user_id: s.userId, created_at: now, updated_at: now,
+        record_id: newId_('r'), user_id: owner, created_at: now, updated_at: now,
         enc_data: it.encData, image_ids: (it.imageIds || []).map(String).join(',')
       };
     });
     const values = rows.map(function (r) { return HEADERS.Records.map(function (h) { return cell_(r[h]); }); });
     sh.getRange(sh.getLastRow() + 1, 1, values.length, HEADERS.Records.length).setValues(values);
-    audit_(s.userId, 'record_create_batch', String(rows.length));
+    audit_(s.userId, 'record_create_batch', String(rows.length) + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordIds: rows.map(function (r) { return r.record_id; }) };
   });
 }
 
-function api_deleteRecord(token, recordId) {
+function api_deleteRecord(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   return withLock_(function () {
-    const rec = ownRecord_(s.userId, recordId);
-    trashIfUnused_(s.userId, rec.image_ids ? String(rec.image_ids).split(',') : [], rec.record_id);
+    const rec = ownRecord_(owner, recordId);
+    trashIfUnused_(owner, rec.image_ids ? String(rec.image_ids).split(',') : [], rec.record_id);
     const chatRows = readAll_(SHEETS.CHATS)
-      .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+      .filter(function (c) { return String(c.user_id) === owner && String(c.record_id) === String(recordId); })
       .map(function (c) { return c._row; });
     deleteRows_(SHEETS.CHATS, chatRows);
     deleteRows_(SHEETS.RECORDS, [rec._row]);
@@ -100,68 +105,80 @@ function api_deleteRecord(token, recordId) {
   });
 }
 
-/* ---------------- 사진 (암호화된 파일로 드라이브에 저장) ---------------- */
+/* ---------------- 사진·PDF (암호화된 파일로 드라이브에 저장) ---------------- */
 
-function api_uploadImage(token, encB64) {
-  const s = requireSession_(token);
+function api_uploadImage(token, encB64, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   if (typeof encB64 !== 'string' || !B64_RE.test(encB64) || encB64.length > MAX_IMAGE_B64_CHARS) {
     throw new Error('파일이 너무 크거나(최대 10MB) 형식이 올바르지 않습니다.');
   }
   const folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('IMAGE_FOLDER_ID'));
   const blob = Utilities.newBlob(Utilities.base64Decode(encB64), 'application/octet-stream', newId_('img') + '.enc');
   const file = folder.createFile(blob);
-  file.setDescription(s.userId); // 소유자 표시 (내용은 암호문)
+  file.setDescription(owner); // 소유자 표시 (내용은 암호문)
   return { imageId: file.getId() };
 }
 
-function api_getImage(token, imageId) {
-  const s = requireSession_(token);
-  const file = assertOwnImage_(s.userId, imageId);
+function api_getImage(token, imageId, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  const file = assertOwnImage_(owner, imageId);
   return { encB64: Utilities.base64Encode(file.getBlob().getBytes()) };
 }
 
 /** 저장하지 않고 버린 사진 정리 */
-function api_discardImages(token, imageIds) {
-  const s = requireSession_(token);
+function api_discardImages(token, imageIds, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   const used = {};
-  findRows_(SHEETS.RECORDS, 'user_id', s.userId).forEach(function (r) {
+  findRows_(SHEETS.RECORDS, 'user_id', owner).forEach(function (r) {
     (r.image_ids ? String(r.image_ids).split(',') : []).forEach(function (id) { used[id] = true; });
   });
   (imageIds || []).forEach(function (id) {
     if (used[id]) return;
-    try { assertOwnImage_(s.userId, id); trashImage_(id); } catch (e) { /* 무시 */ }
+    try { assertOwnImage_(owner, id); trashImage_(id); } catch (e) { /* 무시 */ }
   });
   return { ok: true };
 }
 
 /* ---------------- 질의응답 기록 ---------------- */
+// 상담 내역은 "누구의 기록에 대해(user_id)" + "누가 물었는지(author_id)"로 저장한다.
+// 보호자가 장모님 기록에 대해 물은 내용은 그 보호자에게만 보인다.
+
+function chatAuthor_(c) { return String(c.author_id || c.user_id); }
 
 /** recordId 가 'ALL' 이면 전체 기록 대상 대화 */
-function api_listChats(token, recordId) {
+function api_listChats(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   return readAll_(SHEETS.CHATS)
-    .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+    .filter(function (c) {
+      return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+    })
     .map(function (c) { return { messageId: String(c.message_id), createdAt: String(c.created_at), encData: String(c.enc_data) }; });
 }
 
-function api_saveChat(token, recordId, encData) {
+function api_saveChat(token, recordId, encData, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   assertEnc_(encData);
-  if (recordId !== 'ALL') ownRecord_(s.userId, recordId);
+  if (recordId !== 'ALL') ownRecord_(owner, recordId);
   const messageId = newId_('m');
   withLock_(function () {
     appendRow_(SHEETS.CHATS, {
-      message_id: messageId, user_id: s.userId, record_id: recordId, created_at: nowIso_(), enc_data: encData
+      message_id: messageId, user_id: owner, record_id: recordId, created_at: nowIso_(),
+      enc_data: encData, author_id: s.userId
     });
   });
   return { messageId: messageId };
 }
 
-function api_clearChats(token, recordId) {
+function api_clearChats(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   return withLock_(function () {
     const rows = readAll_(SHEETS.CHATS)
-      .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+      .filter(function (c) {
+        return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+      })
       .map(function (c) { return c._row; });
     deleteRows_(SHEETS.CHATS, rows);
     return { ok: true };
@@ -170,19 +187,19 @@ function api_clearChats(token, recordId) {
 
 /* ---------------- 의사 선생님 설정 ---------------- */
 
-function api_getDoctorProfile(token) {
-  const s = requireSession_(token);
-  const row = findRows_(SHEETS.PROFILES, 'user_id', s.userId)[0];
+function api_getDoctorProfile(token, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  const row = findRows_(SHEETS.PROFILES, 'user_id', owner)[0];
   return { encData: row ? String(row.enc_data) : '', presets: listPresets_() };
 }
 
-function api_saveDoctorProfile(token, encData) {
-  const s = requireSession_(token);
+function api_saveDoctorProfile(token, encData, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   assertEnc_(encData);
   return withLock_(function () {
-    const row = findRows_(SHEETS.PROFILES, 'user_id', s.userId)[0];
+    const row = findRows_(SHEETS.PROFILES, 'user_id', owner)[0];
     if (row) updateRow_(SHEETS.PROFILES, row._row, { updated_at: nowIso_(), enc_data: encData });
-    else appendRow_(SHEETS.PROFILES, { user_id: s.userId, updated_at: nowIso_(), enc_data: encData });
+    else appendRow_(SHEETS.PROFILES, { user_id: owner, updated_at: nowIso_(), enc_data: encData });
     return { ok: true };
   });
 }

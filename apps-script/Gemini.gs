@@ -188,7 +188,7 @@ function api_ask(token, req) {
 
   return {
     answer: callGemini_({
-      systemInstruction: { parts: [{ text: buildDoctorPrompt_(req.doctor || {}, recordsJson) }] },
+      systemInstruction: { parts: [{ text: buildDoctorPrompt_(req.doctor || {}, recordsJson, !!req.asGuardian) }] },
       contents: contents,
       generationConfig: { temperature: 0.4 }
     })
@@ -229,7 +229,7 @@ const LENGTH_TEXT = {
   long: '항목별로 나눠서 자세히.'
 };
 
-function buildDoctorPrompt_(d, recordsJson) {
+function buildDoctorPrompt_(d, recordsJson, asGuardian) {
   const lines = [SAFETY_PROMPT, ''];
 
   const base = getConfig_('BASE_DOCTOR_PROMPT', '');
@@ -257,6 +257,10 @@ function buildDoctorPrompt_(d, recordsJson) {
   if (d.concerns) lines.push('- 특히 걱정하는 점: ' + d.concerns);
   lines.push('');
 
+  if (asGuardian) {
+    lines.push('[질문하는 사람]',
+      '이 질문은 환자 본인이 아니라 환자를 돌보는 가족(보호자)이 하고 있습니다. 보호자에게 설명하듯 답하고, 환자는 3인칭(호칭이 있으면 그 호칭)으로 가리키세요. 보호자가 병원에 동행하거나 챙겨드릴 때 도움이 될 점도 알려주세요.', '');
+  }
   if (d.customPrompt) lines.push('[추가 지시사항 — 사용자 직접 작성]', String(d.customPrompt).slice(0, 4000), '');
 
   lines.push('[환자의 진료 기록 (JSON)]', recordsJson);

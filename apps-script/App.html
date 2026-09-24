@@ -20,7 +20,9 @@ const S = {
   token: null, username: null, dek: null,
   records: [], filter: '전체', search: '',
   doctor: null, presets: [],
-  draft: null, pendingImages: [], keptImageIds: [], review: null
+  draft: null, pendingImages: [], keptImageIds: [], review: null,
+  // 보호자 공유: me = 로그인한 본인, people = [본인, 나를 보호자로 추가한 가족...]
+  me: null, people: [], ownerId: null, perm: 'owner'
 };
 
 const $app = document.getElementById('app');
@@ -96,6 +98,19 @@ function call(fn) {
   });
 }
 
+/** 지금 보고 있는 사람의 기록을 다루는 서버 호출 (본인이면 ownerId = null) */
+function dcall() {
+  const args = Array.prototype.slice.call(arguments);
+  args.push(S.ownerId);
+  return call.apply(null, args);
+}
+
+/** "장모님" 같은 아이디에 "님"이 겹치지 않게 */
+function nim(name) { name = String(name || ''); return /님$/.test(name) ? name : name + '님'; }
+
+function canWrite() { return S.perm === 'owner' || S.perm === 'write'; }
+function viewingOther() { return !!S.ownerId; }
+
 function storageGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 무시 */ } }
 
@@ -153,10 +168,12 @@ async function doLogin() {
     const d = await Crypt.derive(password, pre.kdfSalt, pre.kdfIter);
     const res = await call('api_login', username, d.authKey);
     const dekRaw = await Crypt.unwrapDek(d.kek, res.wrappedDek);
-    S.dek = await Crypt.importDek(dekRaw);
     S.token = res.token;
     S.username = res.username;
-    await loadAll();
+    S.me = { userId: res.userId, username: res.username, dek: await Crypt.importDek(dekRaw), dekRaw: dekRaw, privateKey: null };
+    await setupKeys(res.encPrivateKey);
+    await loadPeople();
+    await selectPerson(null, true);
     done();
     if (!S.doctor._saved) viewDoctor(true); else viewHome();
   } catch (e) { showError(e); }
@@ -253,6 +270,7 @@ function viewRecover() {
 
 function logoutLocal(message) {
   S.token = null; S.username = null; S.dek = null; S.records = []; S.doctor = null;
+  S.me = null; S.people = []; S.ownerId = null; S.perm = 'owner';
   S.draft = null; S.pendingImages = []; S.keptImageIds = [];
   viewLogin(message);
 }
@@ -263,10 +281,47 @@ async function doLogout() {
   try { await call('api_logout', token); } catch (e) { /* 무시 */ }
 }
 
+/* ---------------- 보호자 공유: 키 준비 / 가족 목록 ---------------- */
+
+/** 공개키·개인키 준비. 처음 로그인하는 계정(기존 가입자 포함)은 새로 만들어 등록한다. */
+async function setupKeys(encPrivateKey) {
+  if (encPrivateKey) {
+    const pkcs8 = await Crypt.decryptBlobB64(S.me.dek, encPrivateKey);
+    S.me.privateKey = await Crypt.importPrivateKey(pkcs8);
+    return;
+  }
+  const kp = await Crypt.newKeypair();
+  const res = await call('api_setKeypair', S.token, kp.publicKey, await Crypt.encryptBlobB64(S.me.dek, kp.privatePkcs8));
+  if (!res.already) S.me.privateKey = kp.privateKey;
+}
+
+/** 나를 보호자로 추가한 가족들의 데이터키를 내 개인키로 풀어 둔다 */
+async function loadPeople() {
+  S.people = [{ ownerId: null, username: S.me.username, dek: S.me.dek, perm: 'owner' }];
+  if (!S.me.privateKey) return;
+  const shared = await call('api_listSharedWithMe', S.token);
+  for (const sh of shared) {
+    try {
+      const raw = await Crypt.decryptWithPrivateKey(S.me.privateKey, sh.encDek);
+      S.people.push({ ownerId: sh.ownerId, username: sh.username, dek: await Crypt.importDek(raw), perm: sh.perm, shareId: sh.shareId });
+    } catch (e) { console.warn('공유 키를 열 수 없음', sh.username); }
+  }
+}
+
+/** 누구의 기록을 볼지 바꾼다 (null = 본인) */
+async function selectPerson(ownerId, silent) {
+  const p = S.people.find(function (x) { return x.ownerId === ownerId; }) || S.people[0];
+  S.ownerId = p.ownerId; S.dek = p.dek; S.perm = p.perm; S.viewName = p.username;
+  S.filter = '전체'; S.search = '';
+  if (!silent) loading(nim(p.username) + '의 기록을 불러오는 중…');
+  await loadAll();
+  if (!silent) { done(); viewHome(); }
+}
+
 /* ---------------- 데이터 불러오기 ---------------- */
 
 async function loadAll() {
-  const rows = await call('api_listRecords', S.token);
+  const rows = await dcall('api_listRecords', S.token);
   const records = [];
   for (const r of rows) {
     try {
@@ -275,7 +330,7 @@ async function loadAll() {
   }
   S.records = records.sort(function (a, b) { return sortKey(b).localeCompare(sortKey(a)); });
 
-  const prof = await call('api_getDoctorProfile', S.token);
+  const prof = await dcall('api_getDoctorProfile', S.token);
   S.presets = prof.presets || [];
   let doctor = null;
   if (prof.encData) { try { doctor = await Crypt.decryptJson(S.dek, prof.encData); } catch (e) { doctor = null; } }
@@ -294,20 +349,30 @@ function viewHome() {
   });
 
   render(
-    header('🩺 ' + S.username + '님의 진료기록', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
+    header((viewingOther() ? '👪 ' : '🩺 ') + nim(S.viewName) + '의 진료기록', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
+    (S.people.length > 1 ? '<div class="chips">' + S.people.map(function (p, i) {
+      return '<button class="chip' + (p.ownerId === S.ownerId ? ' on' : '') + '" data-p="' + i + '">' +
+        (p.ownerId ? '👤 ' + esc(p.username) : '🙋 나') + '</button>';
+    }).join('') + '</div>' : '') +
+    (viewingOther() ? '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
+      (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 내가 묻는 질문은 나에게만 보여요.</p>' : '') +
     '<div class="row"><input id="search" placeholder="검색 (병원, 진단명, 메모…)" value="' + esc(S.search) + '"></div>' +
     '<div class="chips">' + filters.map(function (f) {
       return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
     }).join('') + '</div>' +
     (S.records.length ? '<button class="block" id="askAll">💬 전체 기록으로 의사 선생님께 질문하기</button>' : '') +
     (list.length ? list.map(recordCard).join('') :
-      '<div class="card"><p>아직 등록된 기록이 없어요.</p><p class="muted">아래 <b>+ 결과지 등록</b> 버튼을 눌러 결과지 사진을 찍거나, 병원에서 받은 문자를 붙여넣어 보세요.</p></div>') +
-    '<button class="primary fab" id="add">+ 결과지 등록</button>'
+      '<div class="card"><p>아직 등록된 기록이 없어요.</p>' + (canWrite() ? '<p class="muted">아래 <b>+ 결과지 등록</b> 버튼을 눌러 결과지 사진을 찍거나, 병원에서 받은 문자를 붙여넣어 보세요.</p>' : '') + '</div>') +
+    (canWrite() ? '<button class="primary fab" id="add">+ 결과지 등록</button>' : '')
   );
   on('#settings', 'click', viewSettings);
+  on('.chip[data-p]', 'click', function () {
+    const p = S.people[Number(this.getAttribute('data-p'))];
+    if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
+  });
   on('#add', 'click', viewAdd);
   on('#askAll', 'click', function () { viewChat('ALL'); });
-  on('.chip', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
+  on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
   on('#search', 'change', function () { S.search = this.value.trim(); viewHome(); });
   on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id')); });
 }
@@ -570,13 +635,13 @@ async function saveReviewed() {
   try {
     loading('사진을 암호화해서 올리는 중…');
     for (const img of S.pendingImages) {
-      const res = await call('api_uploadImage', S.token, await Crypt.encryptBlobB64(S.dek, img.bytes));
+      const res = await dcall('api_uploadImage', S.token, await Crypt.encryptBlobB64(S.dek, img.bytes));
       uploaded.push(res.imageId);
     }
     loading(chosen.length + '건을 암호화해서 저장하는 중…');
     const items = [];
     for (const d of chosen) items.push({ encData: await Crypt.encryptJson(S.dek, d), imageIds: uploaded });
-    const res = await call('api_saveRecords', S.token, items);
+    const res = await dcall('api_saveRecords', S.token, items);
     const now = new Date().toISOString();
     res.recordIds.forEach(function (id, i) {
       S.records.push({ recordId: id, createdAt: now, updatedAt: now, imageIds: uploaded.slice(), data: chosen[i] });
@@ -587,7 +652,7 @@ async function saveReviewed() {
     toast(chosen.length + '건을 저장했습니다.');
     viewHome();
   } catch (e) {
-    if (uploaded.length) call('api_discardImages', S.token, uploaded).catch(function () {});
+    if (uploaded.length) dcall('api_discardImages', S.token, uploaded).catch(function () {});
     showError(e);
   }
 }
@@ -734,11 +799,11 @@ async function saveDraft() {
   try {
     loading('암호화해서 저장하는 중…');
     for (const img of S.pendingImages) {
-      const res = await call('api_uploadImage', S.token, await Crypt.encryptBlobB64(S.dek, img.bytes));
+      const res = await dcall('api_uploadImage', S.token, await Crypt.encryptBlobB64(S.dek, img.bytes));
       uploaded.push(res.imageId);
     }
     const imageIds = S.keptImageIds.concat(uploaded);
-    const res = await call('api_saveRecord', S.token, {
+    const res = await dcall('api_saveRecord', S.token, {
       recordId: S.draft.recordId || null,
       encData: await Crypt.encryptJson(S.dek, d),
       imageIds: imageIds
@@ -753,7 +818,7 @@ async function saveDraft() {
     toast('저장했습니다.');
     viewDetail(res.recordId);
   } catch (e) {
-    if (uploaded.length) call('api_discardImages', S.token, uploaded).catch(function () {});
+    if (uploaded.length) dcall('api_discardImages', S.token, uploaded).catch(function () {});
     showError(e);
   }
 }
@@ -794,7 +859,7 @@ function viewDetail(recordId) {
     (r.imageIds.length ? '<div class="card"><h3>📷 원본 사진·PDF (' + r.imageIds.length + ')</h3><div id="photos"><button class="block" id="loadPhotos">원본 보기</button></div></div>' : '') +
     (d.raw_text ? '<div class="card"><details><summary>원문 텍스트</summary><p style="white-space:pre-wrap">' + esc(d.raw_text) + '</p></details></div>' : '') +
 
-    '<div class="row" style="margin-top:16px"><button class="grow" id="edit">✏️ 수정</button><button class="grow danger" id="del">🗑 삭제</button></div>'
+    (canWrite() ? '<div class="row" style="margin-top:16px"><button class="grow" id="edit">✏️ 수정</button><button class="grow danger" id="del">🗑 삭제</button></div>' : '')
   );
   bindBack(viewHome);
   on('#ask', 'click', function () { viewChat(recordId); });
@@ -805,7 +870,7 @@ function viewDetail(recordId) {
       loading('원본을 불러오는 중…');
       let html = '';
       for (const id of r.imageIds) {
-        const res = await call('api_getImage', S.token, id);
+        const res = await dcall('api_getImage', S.token, id);
         const bytes = await Crypt.decryptBlobB64(S.dek, res.encB64);
         const type = sniffType(bytes);
         const url = URL.createObjectURL(new Blob([bytes], { type: type }));
@@ -824,7 +889,7 @@ function viewDetail(recordId) {
     if (!(await confirmBox('이 기록과 사진, 질문 내역을 모두 삭제할까요? 되돌릴 수 없습니다.', '삭제'))) return;
     try {
       loading('삭제하는 중…');
-      await call('api_deleteRecord', S.token, recordId);
+      await dcall('api_deleteRecord', S.token, recordId);
       S.records = S.records.filter(function (x) { return x.recordId !== recordId; });
       done(); toast('삭제했습니다.'); viewHome();
     } catch (e) { showError(e); }
@@ -898,7 +963,7 @@ async function viewChat(recordId) {
   const messages = [];
   try {
     loading('대화를 불러오는 중…');
-    const rows = await call('api_listChats', S.token, recordId);
+    const rows = await dcall('api_listChats', S.token, recordId);
     rows.sort(function (a, b) { return a.createdAt.localeCompare(b.createdAt); });
     for (const row of rows) { try { messages.push(await Crypt.decryptJson(S.dek, row.encData)); } catch (e) { /* 건너뜀 */ } }
     done();
@@ -925,7 +990,7 @@ async function viewChat(recordId) {
     on('.chip[data-q]', 'click', function () { send(this.getAttribute('data-q')); });
     on('#clear', 'click', async function () {
       if (!(await confirmBox('이 상담 내역을 모두 지울까요?', '지우기'))) return;
-      try { loading(); await call('api_clearChats', S.token, recordId); messages.length = 0; done(); draw(); } catch (e) { showError(e); }
+      try { loading(); await dcall('api_clearChats', S.token, recordId); messages.length = 0; done(); draw(); } catch (e) { showError(e); }
     });
     window.scrollTo(0, document.body.scrollHeight);
   }
@@ -941,12 +1006,13 @@ async function viewChat(recordId) {
         question: question,
         history: messages.slice(-12),
         records: records,
-        doctor: stripDoctor(S.doctor)
+        doctor: stripDoctor(S.doctor),
+        asGuardian: viewingOther()
       });
       const userMsg = { role: 'user', text: question };
       const modelMsg = { role: 'model', text: res.answer };
-      await call('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, userMsg));
-      await call('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, modelMsg));
+      await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, userMsg));
+      await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, modelMsg));
       messages.push(userMsg, modelMsg);
       done();
       draw();
@@ -963,17 +1029,86 @@ function stripDoctor(d) { const c = Object.assign({}, d); delete c._saved; retur
 function viewSettings() {
   render(
     header('설정', true) +
-    '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정</h3><p class="muted">말투, 설명 수준, 내 건강 정보, 추가 지시사항</p></div>' +
+    (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
+    '<div class="card click" id="guard"><h3>👪 보호자(가족) 관리</h3><p class="muted">내 기록을 볼 수 있는 가족 정하기 · 내가 챙겨보는 가족</p></div>' +
     '<div class="card"><label class="check"><input type="checkbox" id="big"' + (storageGet('fontLarge') === '1' ? ' checked' : '') + '>글씨 크게 보기</label></div>' +
     '<div class="card click" id="pw"><h3>🔑 비밀번호 변경</h3></div>' +
     '<button class="block" id="logout">로그아웃</button>' +
-    '<p class="muted" style="margin-top:16px">내 기록 ' + S.records.length + '건 · 모든 기록은 내 비밀번호로 암호화되어 저장됩니다.</p>'
+    '<p class="muted" style="margin-top:16px">로그인: ' + esc(S.me.username) + ' · 모든 기록은 암호화되어 저장됩니다.</p>'
   );
   bindBack(viewHome);
+  on('#guard', 'click', function () { viewGuardians().catch(showError); });
   on('#doc', 'click', function () { viewDoctor(false); });
   on('#pw', 'click', viewChangePassword);
   on('#logout', 'click', doLogout);
   on('#big', 'change', function () { storageSet('fontLarge', this.checked ? '1' : '0'); applyFontSize(); });
+}
+
+/* ---------------- 보호자(가족) 관리 ---------------- */
+
+const PERM_LABEL = { read: '보기만', write: '보기 + 대신 등록·수정' };
+
+async function viewGuardians() {
+  loading();
+  const mine = await call('api_listGuardians', S.token);
+  done();
+  const others = S.people.filter(function (p) { return p.ownerId; });
+  render(
+    header('보호자(가족) 관리', true) +
+    '<div class="card"><h3>내 기록을 볼 수 있는 가족</h3>' +
+    '<p class="muted">여기 추가한 사람만 내 기록을 볼 수 있어요. 추가하지 않은 가족은 볼 수 없습니다.</p>' +
+    (mine.length ? '<table>' + mine.map(function (g) {
+      return '<tr><td><b>' + esc(g.username) + '</b><div class="muted">' + esc(PERM_LABEL[g.perm] || g.perm) + '</div></td>' +
+        '<td style="text-align:right"><button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button></td></tr>';
+    }).join('') + '</table>' : '<p>아직 없어요.</p>') +
+    '<hr><label for="gname">추가할 가족의 아이디</label><input id="gname" autocapitalize="none" placeholder="예) 사위 또는 딸이 쓰는 아이디">' +
+    '<label>권한</label>' + radioGroup('perm', 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
+    '<p style="margin-top:12px"><button class="primary block" id="addG">보호자로 추가</button></p>' +
+    '<p class="muted">추가할 가족이 먼저 가입해서 한 번 로그인해 있어야 해요.</p></div>' +
+
+    '<div class="card"><h3>내가 챙겨보는 가족</h3>' +
+    (others.length ? '<table>' + others.map(function (p) {
+      return '<tr><td><b>' + esc(p.username) + '</b><div class="muted">' + esc(PERM_LABEL[p.perm] || p.perm) + '</div></td>' +
+        '<td style="text-align:right"><button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button></td></tr>';
+    }).join('') + '</table>' : '<p class="muted">나를 보호자로 추가한 가족이 없어요.</p>') + '</div>'
+  );
+  bindBack(viewSettings);
+
+  on('#addG', 'click', async function () {
+    const name = val('#gname');
+    const perm = ($('input[name="perm"]:checked') || {}).value || 'read';
+    if (!name) return showError(new Error('가족의 아이디를 입력해 주세요.'));
+    try {
+      loading('확인 중…');
+      const u = await call('api_findUser', S.token, name);
+      done();
+      const ok = await confirmBox(nim(u.username) + '이 내 진료기록 전체를 볼 수 있게 됩니다' +
+        (perm === 'write' ? ' (대신 등록·수정도 가능)' : '') + '. 추가할까요?', '추가');
+      if (!ok) return;
+      loading('추가하는 중…');
+      const encDek = await Crypt.encryptForPublicKey(u.publicKey, S.me.dekRaw);
+      await call('api_addGuardian', S.token, u.userId, encDek, perm);
+      toast(nim(u.username) + '을 보호자로 추가했습니다.');
+      await viewGuardians();
+    } catch (e) { showError(e); }
+  });
+  on('[data-rm]', 'click', async function () {
+    const id = this.getAttribute('data-rm'), name = this.getAttribute('data-name');
+    if (!(await confirmBox(nim(name) + '이 더 이상 내 기록을 볼 수 없게 할까요?', '해제'))) return;
+    try { loading(); await call('api_removeShare', S.token, id); toast('해제했습니다.'); await viewGuardians(); } catch (e) { showError(e); }
+  });
+  on('[data-leave]', 'click', async function () {
+    const id = this.getAttribute('data-leave'), name = this.getAttribute('data-name');
+    if (!(await confirmBox(nim(name) + '의 기록을 더 이상 보지 않을까요? (다시 보려면 ' + nim(name) + '이 다시 추가해야 해요)', '그만 보기'))) return;
+    try {
+      loading();
+      await call('api_removeShare', S.token, id);
+      S.people = S.people.filter(function (p) { return p.shareId !== id; });
+      if (S.ownerId && !S.people.some(function (p) { return p.ownerId === S.ownerId; })) await selectPerson(null, true);
+      toast('해제했습니다.');
+      await viewGuardians();
+    } catch (e) { showError(e); }
+  });
 }
 
 function radioGroup(name, value, options) {
@@ -1047,7 +1182,7 @@ function viewDoctor(firstTime) {
     const doctor = collect();
     try {
       loading('저장하는 중…');
-      await call('api_saveDoctorProfile', S.token, await Crypt.encryptJson(S.dek, doctor));
+      await dcall('api_saveDoctorProfile', S.token, await Crypt.encryptJson(S.dek, doctor));
       S.doctor = Object.assign({}, doctor, { _saved: true });
       done(); toast('의사 선생님 설정을 저장했습니다.');
       if (firstTime) viewHome(); else viewSettings();

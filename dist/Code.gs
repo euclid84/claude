@@ -20,6 +20,7 @@ const SHEETS = {
   RECORDS: 'Records',
   CHATS: 'Chats',
   PROFILES: 'DoctorProfiles',
+  SHARES: 'Shares',
   AUDIT: 'AuditLog'
 };
 
@@ -30,11 +31,13 @@ const HEADERS = {
     'user_id', 'username', 'created_at',
     'kdf_salt', 'kdf_iter', 'auth_salt', 'auth_hash', 'wrapped_dek',
     'rc_kdf_salt', 'rc_auth_salt', 'rc_auth_hash', 'wrapped_dek_rc',
-    'failed_count', 'locked_until', 'last_login_at'
+    'failed_count', 'locked_until', 'last_login_at',
+    'public_key', 'enc_private_key'
   ],
   Records: ['record_id', 'user_id', 'created_at', 'updated_at', 'enc_data', 'image_ids'],
-  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data'],
+  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id'],
   DoctorProfiles: ['user_id', 'updated_at', 'enc_data'],
+  Shares: ['share_id', 'owner_id', 'guardian_id', 'enc_dek', 'perm', 'created_at'],
   AuditLog: ['time', 'user_id', 'action', 'detail']
 };
 
@@ -65,6 +68,7 @@ const DEFAULT_PRESETS = [
 
 /** 웹앱 진입점 */
 function doGet() {
+  ensureSchema_();
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle(APP_NAME)
@@ -96,6 +100,7 @@ function setup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const props = PropertiesService.getScriptProperties();
   props.setProperty('SPREADSHEET_ID', ss.getId());
+  props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 
   Object.keys(HEADERS).forEach(function (name) {
     let sh = ss.getSheetByName(name);
@@ -137,6 +142,24 @@ function setup() {
   if (blank && ss.getSheets().length > 1 && blank.getLastRow() === 0) ss.deleteSheet(blank);
 
   safeAlert_('초기 설정 완료!\n\n다음 단계: 메뉴 > "2. Gemini API 키 등록"\n초대코드: ' + getConfig_('INVITE_CODE'));
+}
+
+/**
+ * 새 버전에서 추가된 시트/열을 자동으로 만든다 (기존 데이터는 건드리지 않음).
+ * 새 열은 항상 오른쪽 끝에 추가되므로 기존 행과 어긋나지 않는다.
+ */
+const SCHEMA_VERSION = '2';
+function ensureSchema_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
+  const ss = getSs_();
+  Object.keys(HEADERS).forEach(function (name) {
+    const sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    const headers = HEADERS[name];
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  });
+  props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
 
 /** Gemini API 키는 시트가 아니라 스크립트 속성에 보관한다 (시트에 노출되지 않도록) */
@@ -388,8 +411,10 @@ function api_login(username, authKey) {
   audit_(user.user_id, 'login', '');
   return {
     token: createSession_(user),
+    userId: String(user.user_id),
     username: String(user.username),
-    wrappedDek: String(user.wrapped_dek)
+    wrappedDek: String(user.wrapped_dek),
+    encPrivateKey: user.public_key ? String(user.enc_private_key) : ''
   };
 }
 
@@ -559,7 +584,10 @@ function assertB64_(v, name) {
  * 진료기록 / 사진 / 질의응답 / 의사 설정 저장
  *
  * 여기로 들어오는 enc_data 와 사진은 모두 브라우저에서 이미 암호화된 값이다.
- * 서버는 "누구의 데이터인지(user_id)"만 확인해서 본인 것만 읽고 쓰게 한다.
+ * 서버는 "누구의 데이터인지(user_id)"와 "보호자 권한(Shares)"만 확인한다.
+ *
+ * 모든 API의 마지막 인자 ownerId: 비우면 본인, 채우면 보호자로서 그 사람의 기록을 다룬다.
+ *   (resolveOwner_ 가 Shares 시트로 권한을 확인한다)
  */
 
 const MAX_CELL_CHARS = 49000;       // 구글시트 셀 한도(50,000자) 여유분
@@ -567,9 +595,9 @@ const MAX_IMAGE_B64_CHARS = 14500000; // 암호화된 사진/PDF 1개 최대 약
 
 /* ---------------- 진료기록 ---------------- */
 
-function api_listRecords(token) {
-  const s = requireSession_(token);
-  return findRows_(SHEETS.RECORDS, 'user_id', s.userId).map(function (r) {
+function api_listRecords(token, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  return findRows_(SHEETS.RECORDS, 'user_id', owner).map(function (r) {
     return {
       recordId: String(r.record_id),
       createdAt: String(r.created_at),
@@ -581,18 +609,19 @@ function api_listRecords(token) {
 }
 
 /** req: { recordId?(수정 시), encData, imageIds: [] } */
-function api_saveRecord(token, req) {
+function api_saveRecord(token, req, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   assertEnc_(req.encData);
   const imageIds = (req.imageIds || []).map(String);
-  imageIds.forEach(function (id) { assertOwnImage_(s.userId, id); });
+  imageIds.forEach(function (id) { assertOwnImage_(owner, id); });
 
   return withLock_(function () {
     if (req.recordId) {
-      const rec = ownRecord_(s.userId, req.recordId);
+      const rec = ownRecord_(owner, req.recordId);
       // 수정하면서 빠진 사진은 휴지통으로
       const oldIds = rec.image_ids ? String(rec.image_ids).split(',') : [];
-      trashIfUnused_(s.userId, oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }), rec.record_id);
+      trashIfUnused_(owner, oldIds.filter(function (id) { return imageIds.indexOf(id) === -1; }), rec.record_id);
       updateRow_(SHEETS.RECORDS, rec._row, {
         updated_at: nowIso_(),
         enc_data: req.encData,
@@ -603,10 +632,10 @@ function api_saveRecord(token, req) {
     const recordId = newId_('r');
     const now = nowIso_();
     appendRow_(SHEETS.RECORDS, {
-      record_id: recordId, user_id: s.userId, created_at: now, updated_at: now,
+      record_id: recordId, user_id: owner, created_at: now, updated_at: now,
       enc_data: req.encData, image_ids: imageIds.join(',')
     });
-    audit_(s.userId, 'record_create', recordId);
+    audit_(s.userId, 'record_create', recordId + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordId: recordId };
   });
 }
@@ -615,40 +644,41 @@ function api_saveRecord(token, req) {
  * 여러 건 한 번에 저장 (문자 캡처처럼 한 번에 여러 기록이 나올 때)
  * items: [{ encData, imageIds }]  — 같은 사진을 여러 기록이 함께 가리킬 수 있다.
  */
-function api_saveRecords(token, items) {
+function api_saveRecords(token, items, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   if (!Array.isArray(items) || !items.length || items.length > 100) throw new Error('잘못된 요청입니다.');
   const checked = {};
   items.forEach(function (it) {
     assertEnc_(it.encData);
     (it.imageIds || []).forEach(function (id) {
-      if (!checked[id]) { assertOwnImage_(s.userId, String(id)); checked[id] = true; }
+      if (!checked[id]) { assertOwnImage_(owner, String(id)); checked[id] = true; }
     });
   });
   return withLock_(function () {
     const now = nowIso_();
     const sh = sheet_(SHEETS.RECORDS);
     const rows = items.map(function (it) {
-      const recordId = newId_('r');
       return {
-        record_id: recordId, user_id: s.userId, created_at: now, updated_at: now,
+        record_id: newId_('r'), user_id: owner, created_at: now, updated_at: now,
         enc_data: it.encData, image_ids: (it.imageIds || []).map(String).join(',')
       };
     });
     const values = rows.map(function (r) { return HEADERS.Records.map(function (h) { return cell_(r[h]); }); });
     sh.getRange(sh.getLastRow() + 1, 1, values.length, HEADERS.Records.length).setValues(values);
-    audit_(s.userId, 'record_create_batch', String(rows.length));
+    audit_(s.userId, 'record_create_batch', String(rows.length) + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordIds: rows.map(function (r) { return r.record_id; }) };
   });
 }
 
-function api_deleteRecord(token, recordId) {
+function api_deleteRecord(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
   return withLock_(function () {
-    const rec = ownRecord_(s.userId, recordId);
-    trashIfUnused_(s.userId, rec.image_ids ? String(rec.image_ids).split(',') : [], rec.record_id);
+    const rec = ownRecord_(owner, recordId);
+    trashIfUnused_(owner, rec.image_ids ? String(rec.image_ids).split(',') : [], rec.record_id);
     const chatRows = readAll_(SHEETS.CHATS)
-      .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+      .filter(function (c) { return String(c.user_id) === owner && String(c.record_id) === String(recordId); })
       .map(function (c) { return c._row; });
     deleteRows_(SHEETS.CHATS, chatRows);
     deleteRows_(SHEETS.RECORDS, [rec._row]);
@@ -657,68 +687,80 @@ function api_deleteRecord(token, recordId) {
   });
 }
 
-/* ---------------- 사진 (암호화된 파일로 드라이브에 저장) ---------------- */
+/* ---------------- 사진·PDF (암호화된 파일로 드라이브에 저장) ---------------- */
 
-function api_uploadImage(token, encB64) {
-  const s = requireSession_(token);
+function api_uploadImage(token, encB64, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   if (typeof encB64 !== 'string' || !B64_RE.test(encB64) || encB64.length > MAX_IMAGE_B64_CHARS) {
     throw new Error('파일이 너무 크거나(최대 10MB) 형식이 올바르지 않습니다.');
   }
   const folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('IMAGE_FOLDER_ID'));
   const blob = Utilities.newBlob(Utilities.base64Decode(encB64), 'application/octet-stream', newId_('img') + '.enc');
   const file = folder.createFile(blob);
-  file.setDescription(s.userId); // 소유자 표시 (내용은 암호문)
+  file.setDescription(owner); // 소유자 표시 (내용은 암호문)
   return { imageId: file.getId() };
 }
 
-function api_getImage(token, imageId) {
-  const s = requireSession_(token);
-  const file = assertOwnImage_(s.userId, imageId);
+function api_getImage(token, imageId, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  const file = assertOwnImage_(owner, imageId);
   return { encB64: Utilities.base64Encode(file.getBlob().getBytes()) };
 }
 
 /** 저장하지 않고 버린 사진 정리 */
-function api_discardImages(token, imageIds) {
-  const s = requireSession_(token);
+function api_discardImages(token, imageIds, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   const used = {};
-  findRows_(SHEETS.RECORDS, 'user_id', s.userId).forEach(function (r) {
+  findRows_(SHEETS.RECORDS, 'user_id', owner).forEach(function (r) {
     (r.image_ids ? String(r.image_ids).split(',') : []).forEach(function (id) { used[id] = true; });
   });
   (imageIds || []).forEach(function (id) {
     if (used[id]) return;
-    try { assertOwnImage_(s.userId, id); trashImage_(id); } catch (e) { /* 무시 */ }
+    try { assertOwnImage_(owner, id); trashImage_(id); } catch (e) { /* 무시 */ }
   });
   return { ok: true };
 }
 
 /* ---------------- 질의응답 기록 ---------------- */
+// 상담 내역은 "누구의 기록에 대해(user_id)" + "누가 물었는지(author_id)"로 저장한다.
+// 보호자가 장모님 기록에 대해 물은 내용은 그 보호자에게만 보인다.
+
+function chatAuthor_(c) { return String(c.author_id || c.user_id); }
 
 /** recordId 가 'ALL' 이면 전체 기록 대상 대화 */
-function api_listChats(token, recordId) {
+function api_listChats(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   return readAll_(SHEETS.CHATS)
-    .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+    .filter(function (c) {
+      return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+    })
     .map(function (c) { return { messageId: String(c.message_id), createdAt: String(c.created_at), encData: String(c.enc_data) }; });
 }
 
-function api_saveChat(token, recordId, encData) {
+function api_saveChat(token, recordId, encData, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   assertEnc_(encData);
-  if (recordId !== 'ALL') ownRecord_(s.userId, recordId);
+  if (recordId !== 'ALL') ownRecord_(owner, recordId);
   const messageId = newId_('m');
   withLock_(function () {
     appendRow_(SHEETS.CHATS, {
-      message_id: messageId, user_id: s.userId, record_id: recordId, created_at: nowIso_(), enc_data: encData
+      message_id: messageId, user_id: owner, record_id: recordId, created_at: nowIso_(),
+      enc_data: encData, author_id: s.userId
     });
   });
   return { messageId: messageId };
 }
 
-function api_clearChats(token, recordId) {
+function api_clearChats(token, recordId, ownerId) {
   const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
   return withLock_(function () {
     const rows = readAll_(SHEETS.CHATS)
-      .filter(function (c) { return String(c.user_id) === s.userId && String(c.record_id) === String(recordId); })
+      .filter(function (c) {
+        return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+      })
       .map(function (c) { return c._row; });
     deleteRows_(SHEETS.CHATS, rows);
     return { ok: true };
@@ -727,19 +769,19 @@ function api_clearChats(token, recordId) {
 
 /* ---------------- 의사 선생님 설정 ---------------- */
 
-function api_getDoctorProfile(token) {
-  const s = requireSession_(token);
-  const row = findRows_(SHEETS.PROFILES, 'user_id', s.userId)[0];
+function api_getDoctorProfile(token, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'read');
+  const row = findRows_(SHEETS.PROFILES, 'user_id', owner)[0];
   return { encData: row ? String(row.enc_data) : '', presets: listPresets_() };
 }
 
-function api_saveDoctorProfile(token, encData) {
-  const s = requireSession_(token);
+function api_saveDoctorProfile(token, encData, ownerId) {
+  const owner = resolveOwner_(requireSession_(token), ownerId, 'write');
   assertEnc_(encData);
   return withLock_(function () {
-    const row = findRows_(SHEETS.PROFILES, 'user_id', s.userId)[0];
+    const row = findRows_(SHEETS.PROFILES, 'user_id', owner)[0];
     if (row) updateRow_(SHEETS.PROFILES, row._row, { updated_at: nowIso_(), enc_data: encData });
-    else appendRow_(SHEETS.PROFILES, { user_id: s.userId, updated_at: nowIso_(), enc_data: encData });
+    else appendRow_(SHEETS.PROFILES, { user_id: owner, updated_at: nowIso_(), enc_data: encData });
     return { ok: true };
   });
 }
@@ -792,6 +834,132 @@ function assertEnc_(encData) {
   if (encData.length > MAX_CELL_CHARS) {
     throw new Error('내용이 너무 깁니다. 원문 텍스트를 줄이거나 기록을 나눠서 저장해 주세요.');
   }
+}
+
+// ===================== Shares.gs =====================
+/**
+ * 보호자(가족) 공유
+ *
+ * 예) 장모님이 설정에서 "사위", "딸"을 보호자로 추가하면 두 사람이 장모님 기록을 볼 수 있다.
+ *     반대 방향(장모님이 사위 기록 보기)은 사위가 따로 추가하지 않는 한 불가능하다.
+ *
+ * 암호화 방식
+ *  - 가입자마다 공개키/개인키(RSA-OAEP) 한 쌍이 있다. 개인키는 본인 데이터키로 암호화해서 저장한다.
+ *  - 보호자를 추가하면, 기록 주인의 데이터키를 보호자의 공개키로 암호화해서 Shares 시트에 저장한다.
+ *  - 보호자는 로그인할 때 자기 개인키로 그 데이터키를 풀어서 기록을 연다.
+ *  → 시트에는 여전히 암호문만 있고, 서버는 누가 누구의 기록을 열 수 있는지만 확인한다.
+ */
+
+const SHARE_PERMS = ['read', 'write'];
+
+/**
+ * ownerId 가 비어 있거나 본인이면 본인, 아니면 Shares 시트에서 권한을 확인한다.
+ * need: 'read' (보기·질문) 또는 'write' (등록·수정·삭제)
+ */
+function resolveOwner_(session, ownerId, need) {
+  if (!ownerId || String(ownerId) === session.userId) return session.userId;
+  const share = findShare_(String(ownerId), session.userId);
+  if (!share) throw new Error('이 기록을 볼 권한이 없습니다.');
+  if (need === 'write' && String(share.perm) !== 'write') {
+    throw new Error('보기 권한만 있어서 등록·수정·삭제는 할 수 없습니다.');
+  }
+  return String(ownerId);
+}
+
+function findShare_(ownerId, guardianId) {
+  return readAll_(SHEETS.SHARES).filter(function (r) {
+    return String(r.owner_id) === ownerId && String(r.guardian_id) === guardianId;
+  })[0] || null;
+}
+
+/** 로그인 직후 공개키/개인키가 없는 계정(기존 가입자 포함)에 한 번 등록 */
+function api_setKeypair(token, publicKey, encPrivateKey) {
+  const s = requireSession_(token);
+  assertB64_(publicKey, 'publicKey');
+  if (typeof encPrivateKey !== 'string' || !B64_RE.test(encPrivateKey) || encPrivateKey.length > 20000) {
+    throw new Error('잘못된 요청입니다. (encPrivateKey)');
+  }
+  return withLock_(function () {
+    const user = findUserById_(s.userId);
+    if (user.public_key) return { ok: true, already: true }; // 이미 있으면 바꾸지 않는다 (공유가 깨지지 않도록)
+    updateRow_(SHEETS.USERS, user._row, { public_key: publicKey, enc_private_key: encPrivateKey });
+    return { ok: true };
+  });
+}
+
+/** 보호자로 추가할 사람 찾기 (아이디로) */
+function api_findUser(token, username) {
+  const s = requireSession_(token);
+  const user = findUserByUsername_(normalizeUsername_(username));
+  if (!user) throw new Error('해당 아이디를 찾을 수 없습니다.');
+  if (String(user.user_id) === s.userId) throw new Error('본인은 보호자로 추가할 수 없습니다.');
+  if (!user.public_key) throw new Error('그 분이 새 버전 앱에 한 번 로그인한 뒤에 추가할 수 있습니다.');
+  return { userId: String(user.user_id), username: String(user.username), publicKey: String(user.public_key) };
+}
+
+/** 내 기록을 볼 보호자 추가 (encDek: 내 데이터키를 보호자 공개키로 암호화한 값) */
+function api_addGuardian(token, guardianId, encDek, perm) {
+  const s = requireSession_(token);
+  assertB64_(encDek, 'encDek');
+  if (SHARE_PERMS.indexOf(perm) === -1) throw new Error('잘못된 권한입니다.');
+  guardianId = String(guardianId);
+  if (guardianId === s.userId) throw new Error('본인은 보호자로 추가할 수 없습니다.');
+  const guardian = findRows_(SHEETS.USERS, 'user_id', guardianId)[0];
+  if (!guardian) throw new Error('해당 사용자를 찾을 수 없습니다.');
+  return withLock_(function () {
+    const existing = findShare_(s.userId, guardianId);
+    if (existing) {
+      updateRow_(SHEETS.SHARES, existing._row, { enc_dek: encDek, perm: perm });
+    } else {
+      appendRow_(SHEETS.SHARES, {
+        share_id: newId_('s'), owner_id: s.userId, guardian_id: guardianId,
+        enc_dek: encDek, perm: perm, created_at: nowIso_()
+      });
+    }
+    audit_(s.userId, 'guardian_add', guardianId + ' ' + perm);
+    return { ok: true };
+  });
+}
+
+/** 내가 추가한 보호자 목록 */
+function api_listGuardians(token) {
+  const s = requireSession_(token);
+  const names = usernameMap_();
+  return readAll_(SHEETS.SHARES)
+    .filter(function (r) { return String(r.owner_id) === s.userId; })
+    .map(function (r) {
+      return { shareId: String(r.share_id), userId: String(r.guardian_id), username: names[r.guardian_id] || '(탈퇴)', perm: String(r.perm) };
+    });
+}
+
+/** 나를 보호자로 추가한 사람들 (내가 챙겨볼 수 있는 가족) */
+function api_listSharedWithMe(token) {
+  const s = requireSession_(token);
+  const names = usernameMap_();
+  return readAll_(SHEETS.SHARES)
+    .filter(function (r) { return String(r.guardian_id) === s.userId && names[r.owner_id]; })
+    .map(function (r) {
+      return { shareId: String(r.share_id), ownerId: String(r.owner_id), username: names[r.owner_id], encDek: String(r.enc_dek), perm: String(r.perm) };
+    });
+}
+
+/** 공유 해제: 기록 주인 또는 보호자 본인이 할 수 있다 */
+function api_removeShare(token, shareId) {
+  const s = requireSession_(token);
+  return withLock_(function () {
+    const row = findRows_(SHEETS.SHARES, 'share_id', shareId)[0];
+    if (!row) return { ok: true };
+    if (String(row.owner_id) !== s.userId && String(row.guardian_id) !== s.userId) throw new Error('권한이 없습니다.');
+    deleteRows_(SHEETS.SHARES, [row._row]);
+    audit_(s.userId, 'share_remove', String(row.owner_id) + '->' + String(row.guardian_id));
+    return { ok: true };
+  });
+}
+
+function usernameMap_() {
+  const map = {};
+  readAll_(SHEETS.USERS).forEach(function (u) { map[u.user_id] = String(u.username); });
+  return map;
 }
 
 // ===================== Gemini.gs =====================
@@ -985,7 +1153,7 @@ function api_ask(token, req) {
 
   return {
     answer: callGemini_({
-      systemInstruction: { parts: [{ text: buildDoctorPrompt_(req.doctor || {}, recordsJson) }] },
+      systemInstruction: { parts: [{ text: buildDoctorPrompt_(req.doctor || {}, recordsJson, !!req.asGuardian) }] },
       contents: contents,
       generationConfig: { temperature: 0.4 }
     })
@@ -1026,7 +1194,7 @@ const LENGTH_TEXT = {
   long: '항목별로 나눠서 자세히.'
 };
 
-function buildDoctorPrompt_(d, recordsJson) {
+function buildDoctorPrompt_(d, recordsJson, asGuardian) {
   const lines = [SAFETY_PROMPT, ''];
 
   const base = getConfig_('BASE_DOCTOR_PROMPT', '');
@@ -1054,6 +1222,10 @@ function buildDoctorPrompt_(d, recordsJson) {
   if (d.concerns) lines.push('- 특히 걱정하는 점: ' + d.concerns);
   lines.push('');
 
+  if (asGuardian) {
+    lines.push('[질문하는 사람]',
+      '이 질문은 환자 본인이 아니라 환자를 돌보는 가족(보호자)이 하고 있습니다. 보호자에게 설명하듯 답하고, 환자는 3인칭(호칭이 있으면 그 호칭)으로 가리키세요. 보호자가 병원에 동행하거나 챙겨드릴 때 도움이 될 점도 알려주세요.', '');
+  }
   if (d.customPrompt) lines.push('[추가 지시사항 — 사용자 직접 작성]', String(d.customPrompt).slice(0, 4000), '');
 
   lines.push('[환자의 진료 기록 (JSON)]', recordsJson);

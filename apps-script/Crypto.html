@@ -90,6 +90,30 @@ const Crypt = (function () {
     async encryptBlobB64(dek, bytes) { return b64(await encryptBytes(dek, bytes)); },
     async decryptBlobB64(dek, b64str) { return decryptBytes(dek, unb64(b64str)); },
 
+    /* ---- 보호자 공유용 공개키/개인키 (RSA-OAEP 2048) ---- */
+
+    /** 새 키쌍 → { publicKey(spki b64), privateKey(CryptoKey), privatePkcs8(bytes) } */
+    async newKeypair() {
+      assertSupported();
+      const pair = await subtle.generateKey(
+        { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true, ['encrypt', 'decrypt']);
+      const spki = new Uint8Array(await subtle.exportKey('spki', pair.publicKey));
+      const pkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', pair.privateKey));
+      return { publicKey: b64(spki), privateKey: pair.privateKey, privatePkcs8: pkcs8 };
+    },
+    async importPrivateKey(pkcs8) {
+      return subtle.importKey('pkcs8', pkcs8, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']);
+    },
+    /** 상대방 공개키로 작은 데이터(데이터키 32바이트)를 암호화 */
+    async encryptForPublicKey(publicKeyB64, bytes) {
+      const key = await subtle.importKey('spki', unb64(publicKeyB64), { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+      return b64(new Uint8Array(await subtle.encrypt({ name: 'RSA-OAEP' }, key, bytes)));
+    },
+    async decryptWithPrivateKey(privateKey, b64str) {
+      return new Uint8Array(await subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, unb64(b64str)));
+    },
+
     /** 사람이 받아 적기 쉬운 복구코드 (혼동되는 0/O/1/I 제외, 약 100bit) */
     newRecoveryCode() {
       const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

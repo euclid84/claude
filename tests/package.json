@@ -1,0 +1,6 @@
+{
+  "name": "family-medical-records-tests",
+  "private": true,
+  "scripts": { "test": "node e2e.js" },
+  "devDependencies": { "playwright-core": "^1.63.0" }
+}

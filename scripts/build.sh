@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 mkdir -p dist
 {
   echo "// 자동 생성 파일 — 원본은 apps-script/*.gs (scripts/build.sh 로 생성)"
-  for f in Code Db Auth Records Gemini; do
+  for f in Code Db Auth Records Shares Gemini; do
     echo ""
     echo "// ===================== $f.gs ====================="
     cat "apps-script/$f.gs"

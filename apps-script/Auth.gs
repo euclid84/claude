@@ -93,8 +93,10 @@ function api_login(username, authKey) {
   audit_(user.user_id, 'login', '');
   return {
     token: createSession_(user),
+    userId: String(user.user_id),
     username: String(user.username),
-    wrappedDek: String(user.wrapped_dek)
+    wrappedDek: String(user.wrapped_dek),
+    encPrivateKey: user.public_key ? String(user.enc_private_key) : ''
   };
 }
 
