@@ -35,7 +35,7 @@ const HEADERS = {
     'public_key', 'enc_private_key'
   ],
   Records: ['record_id', 'user_id', 'created_at', 'updated_at', 'enc_data', 'image_ids'],
-  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id'],
+  Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id', 'shared'],
   DoctorProfiles: ['user_id', 'updated_at', 'enc_data'],
   Shares: ['share_id', 'owner_id', 'guardian_id', 'enc_dek', 'perm', 'created_at'],
   AuditLog: ['time', 'user_id', 'action', 'detail']
@@ -148,7 +148,7 @@ function setup() {
  * 새 버전에서 추가된 시트/열을 자동으로 만든다 (기존 데이터는 건드리지 않음).
  * 새 열은 항상 오른쪽 끝에 추가되므로 기존 행과 어긋나지 않는다.
  */
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
@@ -723,19 +723,34 @@ function api_discardImages(token, imageIds, ownerId) {
 
 /* ---------------- 질의응답 기록 ---------------- */
 // 상담 내역은 "누구의 기록에 대해(user_id)" + "누가 물었는지(author_id)"로 저장한다.
-// 보호자가 장모님 기록에 대해 물은 내용은 그 보호자에게만 보인다.
+//  - 기록 주인(장모님): 본인 상담 + 보호자가 "보내준" 상담만 보인다.
+//  - 보호자(사위·딸): 한 팀이다. 보호자들이 나눈 상담 전부 + 장모님 본인 상담(읽기)이 보인다.
+//  - 보호자는 자기 팀 상담 중 원하는 것을 골라 장모님께 보낼 수 있다 (shared = TRUE).
 
 function chatAuthor_(c) { return String(c.author_id || c.user_id); }
+function isShared_(c) { return String(c.shared).toUpperCase() === 'TRUE'; }
 
-/** recordId 가 'ALL' 이면 전체 기록 대상 대화 */
+/** recordId: 기록 ID, 'ALL'(전체 기록 상담), '*'(모든 상담 — 가족이 보내준 설명 모아보기용) */
 function api_listChats(token, recordId, ownerId) {
   const s = requireSession_(token);
   const owner = resolveOwner_(s, ownerId, 'read');
+  const isOwner = owner === s.userId;
+  const names = usernameMap_();
   return readAll_(SHEETS.CHATS)
     .filter(function (c) {
-      return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+      if (String(c.user_id) !== owner) return false;
+      if (recordId !== '*' && String(c.record_id) !== String(recordId)) return false;
+      const fromOwner = chatAuthor_(c) === owner;
+      return isOwner ? (fromOwner || isShared_(c)) : true;
     })
-    .map(function (c) { return { messageId: String(c.message_id), createdAt: String(c.created_at), encData: String(c.enc_data) }; });
+    .map(function (c) {
+      const author = chatAuthor_(c);
+      return {
+        messageId: String(c.message_id), recordId: String(c.record_id), createdAt: String(c.created_at),
+        encData: String(c.enc_data), mine: author === s.userId, fromOwner: author === owner,
+        authorName: names[author] || '', shared: isShared_(c)
+      };
+    });
 }
 
 function api_saveChat(token, recordId, encData, ownerId) {
@@ -747,22 +762,43 @@ function api_saveChat(token, recordId, encData, ownerId) {
   withLock_(function () {
     appendRow_(SHEETS.CHATS, {
       message_id: messageId, user_id: owner, record_id: recordId, created_at: nowIso_(),
-      enc_data: encData, author_id: s.userId
+      enc_data: encData, author_id: s.userId, shared: ''
     });
   });
   return { messageId: messageId };
 }
 
+/** 지우기: 기록 주인은 본인 상담만, 보호자는 보호자 팀 상담만 지운다 */
 function api_clearChats(token, recordId, ownerId) {
   const s = requireSession_(token);
   const owner = resolveOwner_(s, ownerId, 'read');
+  const isOwner = owner === s.userId;
   return withLock_(function () {
     const rows = readAll_(SHEETS.CHATS)
       .filter(function (c) {
-        return String(c.user_id) === owner && String(c.record_id) === String(recordId) && chatAuthor_(c) === s.userId;
+        if (String(c.user_id) !== owner || String(c.record_id) !== String(recordId)) return false;
+        const fromOwner = chatAuthor_(c) === owner;
+        return isOwner ? fromOwner : !fromOwner;
       })
       .map(function (c) { return c._row; });
     deleteRows_(SHEETS.CHATS, rows);
+    return { ok: true };
+  });
+}
+
+/** 보호자 상담 중 골라서 기록 주인(장모님)에게 보내기 / 보내기 취소 */
+function api_shareChats(token, messageIds, shared, ownerId) {
+  const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'read');
+  if (owner === s.userId) throw new Error('보호자만 보낼 수 있습니다.');
+  const ids = (messageIds || []).map(String);
+  return withLock_(function () {
+    readAll_(SHEETS.CHATS).forEach(function (c) {
+      if (ids.indexOf(String(c.message_id)) === -1) return;
+      if (String(c.user_id) !== owner || chatAuthor_(c) === owner) return;
+      updateRow_(SHEETS.CHATS, c._row, { shared: shared ? 'TRUE' : '' });
+    });
+    audit_(s.userId, shared ? 'chat_share' : 'chat_unshare', ids.length + ' to ' + owner);
     return { ok: true };
   });
 }

@@ -104,14 +104,60 @@ async function addManualRecord(page, title) {
   check(!(await me.$('#add')), '사위: 보기 전용이라 등록 버튼 없음');
   await me.screenshot({ path: OUT + '/sawi_views_mom.png' });
 
-  // 5) 사위가 장모님 기록으로 AI 질문 → 보호자 모드 + 질문은 사위에게만 보임
+  // 5) 사위가 장모님 기록으로 AI 질문 → 보호자 모드 + 보내기 전에는 장모님에게 안 보임
   const momRecordId = await me.evaluate(() => S.records[0].recordId);
   await me.click('.card[data-id]'); await waitIdle(me);
   await me.click('#ask'); await waitIdle(me);
   await me.fill('#q', '장모님 결과 괜찮나요?'); await me.click('#send'); await waitIdle(me);
   check(await me.evaluate(() => document.body.innerText.includes('보호자 모드=true')), '사위 질문 시 AI에 "보호자가 묻는 중" 전달');
-  const momSees = await mom.evaluate(id => new Promise(res => google.script.run.withSuccessHandler(res).withFailureHandler(e => res('ERR ' + e.message)).api_listChats(S.token, id, null)), momRecordId);
-  check(Array.isArray(momSees) && momSees.length === 0, '장모님에게는 사위의 질문이 보이지 않음');
+  const listAs = (page, recordId, ownerId) => page.evaluate(([id, o]) => new Promise(res =>
+    google.script.run.withSuccessHandler(res).withFailureHandler(e => res('ERR ' + e.message)).api_listChats(S.token, id, o)), [recordId, ownerId]);
+  check((await listAs(mom, momRecordId, null)).length === 0, '보내기 전: 장모님에게는 사위의 질문이 보이지 않음');
+
+  // 5-1) 장모님이 직접 질문 → 사위의 "장모님 상담" 탭에 보임
+  await mom.click('#back'); await waitIdle(mom); await mom.click('#back'); await waitIdle(mom); // 보호자 관리 → 설정 → 홈
+  await mom.click('.card[data-id]'); await waitIdle(mom);
+  await mom.click('#ask'); await waitIdle(mom);
+  await mom.fill('#q', '제가 물어봐요'); await mom.click('#send'); await waitIdle(mom);
+  check(await mom.evaluate(() => document.body.innerText.includes('보호자 모드=false')), '장모님 본인 질문은 보호자 모드 아님');
+  await me.click('#back'); await waitIdle(me); await me.click('#ask'); await waitIdle(me);
+  await me.click('.chip[data-tab="owner"]'); await waitIdle(me);
+  check(await me.evaluate(() => document.body.innerText.includes('제가 물어봐요')), '사위: 장모님 상담 탭에서 장모님 질문 보기');
+  check(!(await me.$('#send')), '사위: 장모님 상담 탭은 읽기 전용 (입력창 없음)');
+  await me.screenshot({ path: OUT + '/sawi_sees_mom_chat.png' });
+
+  // 5-2) 딸(아내)도 보호자 → 사위의 질문을 같이 봄 (보호자는 한 팀)
+  const wife = await newUserPage(browser);
+  await signupAndLogin(wife, 'ttal', 'ttal-pass-789');
+  await mom.click('#back'); await waitIdle(mom); await mom.click('#back'); await waitIdle(mom);
+  await mom.click('#settings'); await waitIdle(mom); await mom.click('#guard'); await waitIdle(mom);
+  await mom.fill('#gname', 'ttal');
+  await mom.click('#addG'); await mom.waitForSelector('[data-a="yes"]'); await mom.click('[data-a="yes"]'); await waitIdle(mom);
+  await wife.reload(); await login(wife, 'ttal', 'ttal-pass-789');
+  await wife.click('.chip[data-p="1"]'); await waitIdle(wife);
+  await wife.click('.card[data-id]'); await waitIdle(wife); await wife.click('#ask'); await waitIdle(wife);
+  check(await wife.evaluate(() => document.body.innerText.includes('장모님 결과 괜찮나요?') && document.body.innerText.includes('sawi님의 질문')),
+    '딸: 사위가 한 질문을 보호자 상담에서 함께 봄');
+
+  // 5-3) 사위가 답변을 장모님께 보내기 → 장모님 화면에 "가족이 보내준 설명"
+  await me.click('.chip[data-tab="team"]'); await waitIdle(me);
+  await me.click('[data-share]'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
+  await me.screenshot({ path: OUT + '/sawi_shared.png' });
+  const momList = await listAs(mom, momRecordId, null);
+  check(momList.length === 4 && momList.filter(m => !m.fromOwner && m.shared).length === 2, '보낸 뒤: 장모님은 본인 상담 2개 + 보내준 질문·답변 2개를 봄');
+  await mom.reload(); await login(mom, '장모님', 'mom-pass-456');
+  check(!!(await mom.$('#notes')), '장모님 홈에 "가족이 보내준 설명" 카드 표시');
+  await mom.screenshot({ path: OUT + '/mom_home_notes.png' });
+  await mom.click('.card[data-id]'); await waitIdle(mom); await mom.click('#ask'); await waitIdle(mom);
+  check(await mom.evaluate(() => document.body.innerText.includes('sawi님이 보내준 답변')), '장모님 상담 화면에 보내준 설명이 표시됨');
+  await mom.screenshot({ path: OUT + '/mom_chat_with_shared.png' });
+
+  // 5-4) 장모님이 자기 상담을 지워도 보호자 상담은 남고, 사위가 보내기 취소하면 사라짐
+  await mom.click('#clear'); await mom.waitForSelector('[data-a="yes"]'); await mom.click('[data-a="yes"]'); await waitIdle(mom);
+  check((await listAs(mom, momRecordId, null)).filter(m => m.fromOwner).length === 0, '장모님 상담 지우기 → 본인 상담만 삭제');
+  await me.click('[data-unshare]'); await waitIdle(me);
+  check((await listAs(mom, momRecordId, null)).length === 0, '보내기 취소 → 장모님 화면에서 사라짐');
+  check((await listAs(me, momRecordId, await mom.evaluate(() => S.me.userId))).length === 2, '보호자 상담은 그대로 남아 있음');
 
   // 6) 권한 검사 (서버를 직접 호출해서 우회 시도)
   const momId = await mom.evaluate(() => S.me.userId);
@@ -127,7 +173,8 @@ async function addManualRecord(page, title) {
   check(await mom.evaluate(() => S.people.length === 1), '장모님 화면에는 사위 기록 선택지가 없음');
 
   // 7) 장모님이 권한을 "보기 + 등록"으로 바꾸면 사위가 대신 등록 가능
-  await mom.click('#back'); await waitIdle(mom); await mom.click('#guard'); await waitIdle(mom);
+  await mom.reload(); await login(mom, '장모님', 'mom-pass-456');
+  await mom.click('#settings'); await waitIdle(mom); await mom.click('#guard'); await waitIdle(mom);
   await mom.fill('#gname', 'sawi'); await mom.check('input[name="perm"][value="write"]');
   await mom.click('#addG'); await mom.waitForSelector('[data-a="yes"]'); await mom.click('[data-a="yes"]'); await waitIdle(mom);
   await me.reload(); await login(me, 'sawi', 'sawi-pass-123');

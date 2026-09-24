@@ -335,6 +335,12 @@ async function loadAll() {
   let doctor = null;
   if (prof.encData) { try { doctor = await Crypt.decryptJson(S.dek, prof.encData); } catch (e) { doctor = null; } }
   S.doctor = Object.assign({}, DEFAULT_DOCTOR, doctor || {}, { _saved: !!doctor });
+
+  // 본인 화면: 보호자가 보내준 설명 모아두기
+  S.familyNotes = [];
+  if (!viewingOther()) {
+    try { S.familyNotes = (await loadChats('*')).filter(function (m) { return !m.fromOwner; }); } catch (e) { /* 없어도 됨 */ }
+  }
 }
 
 /* ---------------- 홈 (기록 목록) ---------------- */
@@ -355,11 +361,17 @@ function viewHome() {
         (p.ownerId ? '👤 ' + esc(p.username) : '🙋 나') + '</button>';
     }).join('') + '</div>' : '') +
     (viewingOther() ? '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
-      (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 내가 묻는 질문은 나에게만 보여요.</p>' : '') +
+      (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>' : '') +
     '<div class="row"><input id="search" placeholder="검색 (병원, 진단명, 메모…)" value="' + esc(S.search) + '"></div>' +
     '<div class="chips">' + filters.map(function (f) {
       return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
     }).join('') + '</div>' +
+    (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
+      const seen = storageGet(notesSeenKey()) || '';
+      const fresh = S.familyNotes.filter(function (m) { return m.role === 'model' && m.createdAt > seen; }).length;
+      return '<div class="card click family-card" id="notes"><b>👪 가족이 보내준 설명 ' + S.familyNotes.filter(function (m) { return m.role === 'model'; }).length + '건</b>' +
+        (fresh ? ' <span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '</div>';
+    })() : '') +
     (S.records.length ? '<button class="block" id="askAll">💬 전체 기록으로 의사 선생님께 질문하기</button>' : '') +
     (list.length ? list.map(recordCard).join('') :
       '<div class="card"><p>아직 등록된 기록이 없어요.</p>' + (canWrite() ? '<p class="muted">아래 <b>+ 결과지 등록</b> 버튼을 눌러 결과지 사진을 찍거나, 병원에서 받은 문자를 붙여넣어 보세요.</p>' : '') + '</div>') +
@@ -372,6 +384,7 @@ function viewHome() {
   });
   on('#add', 'click', viewAdd);
   on('#askAll', 'click', function () { viewChat('ALL'); });
+  on('#notes', 'click', viewFamilyNotes);
   on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
   on('#search', 'change', function () { S.search = this.value.trim(); viewHome(); });
   on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id')); });
@@ -957,42 +970,112 @@ function sparkline(points, nums) {
 const SUGGEST_ONE = ['이 결과를 쉽게 설명해 주세요', '주의해야 할 수치가 있나요?', '생활습관으로 좋아질 수 있는 건 뭐예요?', '다음 진료 때 무엇을 물어보면 좋을까요?'];
 const SUGGEST_ALL = ['지난번과 비교해서 달라진 점이 있나요?', '계속 나빠지고 있는 수치가 있나요?', '지금 먹고 있는 약을 정리해 주세요', '전체적으로 건강 상태를 요약해 주세요'];
 
-async function viewChat(recordId) {
+/** 상담 내역을 불러와 복호화 (recordId: 기록 ID / 'ALL' / '*') */
+async function loadChats(recordId) {
+  const rows = await dcall('api_listChats', S.token, recordId);
+  rows.sort(function (a, b) { return a.createdAt.localeCompare(b.createdAt); });
+  const out = [];
+  for (const row of rows) {
+    try {
+      const m = await Crypt.decryptJson(S.dek, row.encData);
+      out.push(Object.assign(m, {
+        id: row.messageId, recordId: row.recordId, createdAt: row.createdAt, mine: row.mine,
+        fromOwner: row.fromOwner, authorName: row.authorName, shared: row.shared
+      }));
+    } catch (e) { /* 건너뜀 */ }
+  }
+  return out;
+}
+
+async function viewChat(recordId, startTab) {
   const isAll = recordId === 'ALL';
   const rec = isAll ? null : S.records.find(function (r) { return r.recordId === recordId; });
-  const messages = [];
-  try {
-    loading('대화를 불러오는 중…');
-    const rows = await dcall('api_listChats', S.token, recordId);
-    rows.sort(function (a, b) { return a.createdAt.localeCompare(b.createdAt); });
-    for (const row of rows) { try { messages.push(await Crypt.decryptJson(S.dek, row.encData)); } catch (e) { /* 건너뜀 */ } }
-    done();
-  } catch (e) { showError(e); return; }
+  const guardian = viewingOther();
+  let all;
+  try { loading('대화를 불러오는 중…'); all = await loadChats(recordId); done(); } catch (e) { showError(e); return; }
 
+  // 보호자: 'team'(보호자 팀 상담) / 'owner'(기록 주인 본인 상담, 읽기 전용)
+  let tab = startTab || 'team';
   const doctorLabel = (S.doctor.doctorName || '의사') + ' 선생님';
+  const ownerName = nim(S.viewName);
+
+  /** AI에게 이어서 물을 때 쓰는 대화 흐름: 보호자는 팀 상담, 본인은 본인 상담만 */
+  function myThread() { return all.filter(function (m) { return guardian ? !m.fromOwner : m.fromOwner; }); }
+  function shown() {
+    if (!guardian) return all;                       // 본인 상담 + 가족이 보내준 설명
+    return all.filter(function (m) { return tab === 'owner' ? m.fromOwner : !m.fromOwner; });
+  }
+
+  function bubble(m, i, list) {
+    let label = '';
+    if (!guardian && !m.fromOwner) label = '👪 ' + nim(m.authorName) + (m.role === 'user' ? '이 물어본 것' : '이 보내준 답변');
+    else if (guardian && tab === 'team' && m.role === 'user' && !m.mine) label = nim(m.authorName) + '의 질문';
+    const cls = (!guardian && !m.fromOwner) ? 'family' : (m.role === 'user' ? 'user' : 'model');
+    let actions = '';
+    if (guardian && tab === 'team' && m.role === 'model') {
+      actions = m.shared
+        ? '<div class="msg-act">✓ ' + esc(ownerName) + '께 보냄 <button class="link" data-unshare="' + i + '">취소</button></div>'
+        : '<div class="msg-act"><button class="link" data-share="' + i + '">📤 ' + esc(ownerName) + '께 보내기</button></div>';
+    }
+    return (label ? '<div class="msg-label ' + (cls === 'user' ? 'right' : '') + '">' + esc(label) + '</div>' : '') +
+      '<div class="msg ' + cls + '">' + esc(m.text) + '</div>' + actions;
+  }
+
   function draw() {
+    const list = shown();
+    const canAsk = !guardian || tab === 'team';
+    const clearable = myThread().length > 0 && canAsk;
     render(
-      header(isAll ? '전체 기록 상담' : (rec.data.title || '상담'), true, messages.length ? '<button class="icon" id="clear">🗑</button>' : '') +
+      header(isAll ? '전체 기록 상담' : (rec.data.title || '상담'), true, clearable ? '<button class="icon" id="clear">🗑</button>' : '') +
+      (guardian ? '<div class="chips">' +
+        '<button class="chip' + (tab === 'team' ? ' on' : '') + '" data-tab="team">👪 보호자 상담</button>' +
+        '<button class="chip' + (tab === 'owner' ? ' on' : '') + '" data-tab="owner">👤 ' + esc(ownerName) + ' 상담 (' + all.filter(function (m) { return m.fromOwner; }).length + ')</button>' +
+        '</div>' : '') +
+      (guardian && tab === 'team' ? '<p class="muted">보호자끼리 함께 보는 상담이에요. 답변 아래 <b>📤 보내기</b>를 누르면 ' + esc(ownerName) + '께도 보여요.</p>' : '') +
+      (guardian && tab === 'owner' ? '<p class="muted">' + esc(ownerName) + '이 직접 나눈 상담이에요 (읽기만 가능).</p>' : '') +
       '<p class="notice">AI 설명은 참고용입니다. 진단·처방은 반드시 담당 의사와 상의하세요. 응급 상황은 119.</p>' +
       '<div class="chat">' +
-      (messages.length ? '' : '<div class="msg model">안녕하세요, ' + esc(doctorLabel) + '입니다. ' +
-        (isAll ? '등록하신 기록 전체를 보고 답해 드릴게요.' : '이 결과에 대해 궁금한 점을 물어보세요.') + '</div>' +
-        '<div class="chips" style="flex-wrap:wrap">' + (isAll ? SUGGEST_ALL : SUGGEST_ONE).map(function (q) {
-          return '<button class="chip" data-q="' + esc(q) + '">' + esc(q) + '</button>';
-        }).join('') + '</div>') +
-      messages.map(function (m) { return '<div class="msg ' + (m.role === 'user' ? 'user' : 'model') + '">' + esc(m.text) + '</div>'; }).join('') +
+      (list.length ? '' : (canAsk
+        ? '<div class="msg model">안녕하세요, ' + esc(doctorLabel) + '입니다. ' +
+          (isAll ? '등록된 기록 전체를 보고 답해 드릴게요.' : '이 결과에 대해 궁금한 점을 물어보세요.') + '</div>' +
+          '<div class="chips" style="flex-wrap:wrap">' + (isAll ? SUGGEST_ALL : SUGGEST_ONE).map(function (q) {
+            return '<button class="chip" data-q="' + esc(q) + '">' + esc(q) + '</button>';
+          }).join('') + '</div>'
+        : '<p class="muted">아직 상담 내역이 없어요.</p>')) +
+      list.map(function (m, i) { return bubble(m, i, list); }).join('') +
       '</div>' +
-      '<div class="composer"><div class="inner"><textarea id="q" placeholder="궁금한 점을 적어주세요"></textarea>' +
-      '<button class="primary" id="send">보내기</button></div></div>'
+      (canAsk ? '<div class="composer"><div class="inner"><textarea id="q" placeholder="궁금한 점을 적어주세요"></textarea>' +
+        '<button class="primary" id="send">보내기</button></div></div>' : '')
     );
     bindBack(function () { if (isAll) viewHome(); else viewDetail(recordId); });
     on('#send', 'click', function () { send(val('#q')); });
     on('.chip[data-q]', 'click', function () { send(this.getAttribute('data-q')); });
+    on('.chip[data-tab]', 'click', function () { tab = this.getAttribute('data-tab'); draw(); });
+    on('[data-share]', 'click', function () { share(list, Number(this.getAttribute('data-share')), true); });
+    on('[data-unshare]', 'click', function () { share(list, Number(this.getAttribute('data-unshare')), false); });
     on('#clear', 'click', async function () {
-      if (!(await confirmBox('이 상담 내역을 모두 지울까요?', '지우기'))) return;
-      try { loading(); await dcall('api_clearChats', S.token, recordId); messages.length = 0; done(); draw(); } catch (e) { showError(e); }
+      const what = guardian ? '보호자 상담 내역을' : '내 상담 내역을';
+      if (!(await confirmBox('이 기록의 ' + what + ' 모두 지울까요?', '지우기'))) return;
+      try {
+        loading(); await dcall('api_clearChats', S.token, recordId);
+        all = all.filter(function (m) { return guardian ? m.fromOwner : !m.fromOwner; });
+        done(); draw();
+      } catch (e) { showError(e); }
     });
     window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  /** 답변과 그 바로 앞 질문을 함께 보내기/취소 */
+  async function share(list, i, flag) {
+    const pair = [list[i]];
+    if (i > 0 && list[i - 1].role === 'user') pair.unshift(list[i - 1]);
+    if (flag && !(await confirmBox('이 질문과 답변을 ' + ownerName + '께 보낼까요? ' + ownerName + ' 화면에 "가족이 보내준 설명"으로 보여요.', '보내기'))) return;
+    try {
+      loading();
+      await dcall('api_shareChats', S.token, pair.map(function (m) { return m.id; }), flag);
+      pair.forEach(function (m) { m.shared = flag; });
+      done(); toast(flag ? ownerName + '께 보냈습니다.' : '보내기를 취소했습니다.'); draw();
+    } catch (e) { showError(e); }
   }
 
   async function send(question) {
@@ -1004,22 +1087,60 @@ async function viewChat(recordId) {
       loading(doctorLabel + '이 답변을 준비하고 있어요…');
       const res = await call('api_ask', S.token, {
         question: question,
-        history: messages.slice(-12),
+        history: myThread().slice(-12).map(function (m) { return { role: m.role, text: m.text }; }),
         records: records,
         doctor: stripDoctor(S.doctor),
-        asGuardian: viewingOther()
+        asGuardian: guardian
       });
+      const now = new Date().toISOString();
       const userMsg = { role: 'user', text: question };
       const modelMsg = { role: 'model', text: res.answer };
-      await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, userMsg));
-      await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, modelMsg));
-      messages.push(userMsg, modelMsg);
+      const u = await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, userMsg));
+      const a = await dcall('api_saveChat', S.token, recordId, await Crypt.encryptJson(S.dek, modelMsg));
+      const base = { mine: true, fromOwner: !guardian, authorName: S.me.username, shared: false, createdAt: now, recordId: recordId };
+      all.push(Object.assign({ id: u.messageId }, base, userMsg), Object.assign({ id: a.messageId }, base, modelMsg));
       done();
       draw();
     } catch (e) { showError(e); }
   }
 
   draw();
+}
+
+/* ---------------- 가족이 보내준 설명 (기록 주인 화면) ---------------- */
+
+function notesSeenKey() { return 'notesSeen_' + (S.me && S.me.userId); }
+
+function viewFamilyNotes() {
+  const notes = S.familyNotes || [];
+  storageSet(notesSeenKey(), new Date().toISOString());
+  const titleOf = function (id) {
+    if (id === 'ALL') return '전체 기록 상담';
+    const r = S.records.find(function (x) { return x.recordId === id; });
+    return r ? (r.data.title || '기록') + ' · ' + fmtDate(r.data.date) : '삭제된 기록';
+  };
+  const groups = [];
+  notes.forEach(function (m) {
+    let g = groups.find(function (x) { return x.recordId === m.recordId; });
+    if (!g) { g = { recordId: m.recordId, items: [] }; groups.push(g); }
+    g.items.push(m);
+  });
+  groups.reverse();
+  render(
+    header('👪 가족이 보내준 설명', true) +
+    (groups.length ? groups.map(function (g) {
+      return '<div class="card click" data-rec="' + esc(g.recordId) + '"><h3>' + esc(titleOf(g.recordId)) + '</h3>' +
+        g.items.map(function (m) {
+          return '<div class="msg-label">' + esc(m.role === 'user' ? nim(m.authorName) + '의 질문' : '답변') + '</div>' +
+            '<div class="msg ' + (m.role === 'user' ? 'family' : 'model') + '" style="max-width:100%">' + esc(m.text) + '</div>';
+        }).join('') + '</div>';
+    }).join('') : '<div class="card"><p>아직 가족이 보내준 설명이 없어요.</p></div>')
+  );
+  bindBack(viewHome);
+  on('.card[data-rec]', 'click', function () {
+    const id = this.getAttribute('data-rec');
+    if (id === 'ALL' || S.records.some(function (r) { return r.recordId === id; })) viewChat(id);
+  });
 }
 
 function stripDoctor(d) { const c = Object.assign({}, d); delete c._saved; return c; }
@@ -1056,7 +1177,7 @@ async function viewGuardians() {
   render(
     header('보호자(가족) 관리', true) +
     '<div class="card"><h3>내 기록을 볼 수 있는 가족</h3>' +
-    '<p class="muted">여기 추가한 사람만 내 기록을 볼 수 있어요. 추가하지 않은 가족은 볼 수 없습니다.</p>' +
+    '<p class="muted">여기 추가한 사람만 내 기록과 상담 내역을 볼 수 있어요. 추가하지 않은 가족은 볼 수 없습니다.</p>' +
     (mine.length ? '<table>' + mine.map(function (g) {
       return '<tr><td><b>' + esc(g.username) + '</b><div class="muted">' + esc(PERM_LABEL[g.perm] || g.perm) + '</div></td>' +
         '<td style="text-align:right"><button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button></td></tr>';
@@ -1083,7 +1204,7 @@ async function viewGuardians() {
       const u = await call('api_findUser', S.token, name);
       done();
       const ok = await confirmBox(nim(u.username) + '이 내 진료기록 전체를 볼 수 있게 됩니다' +
-        (perm === 'write' ? ' (대신 등록·수정도 가능)' : '') + '. 추가할까요?', '추가');
+        (perm === 'write' ? ' (대신 등록·수정도 가능)' : '') + '. 내가 AI 선생님과 나눈 상담 내역도 볼 수 있어요. 추가할까요?', '추가');
       if (!ok) return;
       loading('추가하는 중…');
       const encDek = await Crypt.encryptForPublicKey(u.publicKey, S.me.dekRaw);
