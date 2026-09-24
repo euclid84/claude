@@ -193,6 +193,40 @@ async function addManualRecord(page, title) {
   const r3 = await tryCall(me, 'api_listRecords', [await me.evaluate(() => S.token), momId]);
   check(r3.err && r3.err.includes('권한이 없습니다'), '공유 해제 후 사위 열람 거부');
 
+  // 10) 내가 대신 관리하는 가족 프로필 (예: 아빠) → 아내와 함께 보기 → 본인 계정으로 넘겨주기
+  await me.reload(); await login(me, 'sawi', 'sawi-pass-123');
+  await me.click('#settings'); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
+  await me.fill('#pname', '아빠'); await me.click('#addP'); await waitIdle(me);
+  check(await me.evaluate(() => S.viewName === '아빠' && S.managed === true && canWrite()), '가족 프로필 "아빠" 생성 후 바로 아빠 화면으로 전환');
+  await me.screenshot({ path: OUT + '/dad_home.png' });
+  await addManualRecord(me, '아빠 건강검진');
+  const dadId = await me.evaluate(() => S.ownerId);
+  check(await me.evaluate(() => S.records.length === 1), '아빠 기록 대신 등록');
+  // 아빠 프로필은 로그인 불가
+  const dadUsername = gas.sheets.Users._rows.find(r => r[0] === dadId)[1];
+  const dl = await tryCall(mom, 'api_login', [dadUsername, 'AAAA']);
+  check(!!dl.err, '관리 프로필은 로그인할 수 없음');
+  // 아내(ttal)를 아빠 프로필 보호자로 추가
+  await me.click('#settings'); await waitIdle(me); await me.click('#guard'); await waitIdle(me);
+  await me.click('[data-manage]'); await waitIdle(me);
+  await me.fill('#gname', 'ttal');
+  await me.click('#addG'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
+  await me.screenshot({ path: OUT + '/dad_manage.png' });
+  await wife.reload(); await login(wife, 'ttal', 'ttal-pass-789');
+  const wifeSeesDad = await wife.evaluate(() => S.people.some(p => p.username === '아빠'));
+  check(wifeSeesDad, '아내: 가족 목록에 아빠 표시');
+  await wife.evaluate(id => selectPerson(id), dadId); await waitIdle(wife);
+  check(await wife.evaluate(() => S.records.length === 1 && S.records[0].data.title === '아빠 건강검진'), '아내: 아빠 기록 복호화해서 보기');
+  // 본인 계정으로 넘겨주기
+  await me.fill('#cu', 'dad'); await me.fill('#cp', 'dad-pass-000'); await me.fill('#cp2', 'dad-pass-000');
+  await me.click('#claim'); await me.waitForSelector('[data-a="yes"]'); await me.click('[data-a="yes"]'); await waitIdle(me);
+  check(await me.evaluate(() => /[A-Z0-9]{4}-/.test(document.querySelector('.code').textContent)), '넘겨주기 후 복구코드 표시');
+  const dad = await newUserPage(browser);
+  await login(dad, 'dad', 'dad-pass-000');
+  check(await dad.evaluate(() => S.records.length === 1 && S.records[0].data.title === '아빠 건강검진'), '아빠: 본인 아이디로 로그인해서 기존 기록 보기');
+  await me.reload(); await login(me, 'sawi', 'sawi-pass-123');
+  check(await me.evaluate(() => S.people.some(p => p.username === '아빠' && !p.managed)), '넘겨준 뒤에도 나는 아빠 보호자로 남음');
+
   await browser.close();
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);

@@ -29,7 +29,8 @@ const HEADERS = {
     'kdf_salt', 'kdf_iter', 'auth_salt', 'auth_hash', 'wrapped_dek',
     'rc_kdf_salt', 'rc_auth_salt', 'rc_auth_hash', 'wrapped_dek_rc',
     'failed_count', 'locked_until', 'last_login_at',
-    'public_key', 'enc_private_key'
+    'public_key', 'enc_private_key',
+    'display_name', 'managed'
   ],
   Records: ['record_id', 'user_id', 'created_at', 'updated_at', 'enc_data', 'image_ids'],
   Chats: ['message_id', 'user_id', 'record_id', 'created_at', 'enc_data', 'author_id', 'shared'],
@@ -145,7 +146,7 @@ function setup() {
  * 새 버전에서 추가된 시트/열을 자동으로 만든다 (기존 데이터는 건드리지 않음).
  * 새 열은 항상 오른쪽 끝에 추가되므로 기존 행과 어긋나지 않는다.
  */
-const SCHEMA_VERSION = '3';
+const SCHEMA_VERSION = '4';
 function ensureSchema_() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;

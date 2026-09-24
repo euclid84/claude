@@ -141,9 +141,9 @@ function api_discardImages(token, imageIds, ownerId) {
 
 /* ---------------- 질의응답 기록 ---------------- */
 // 상담 내역은 "누구의 기록에 대해(user_id)" + "누가 물었는지(author_id)"로 저장한다.
-//  - 기록 주인(장모님): 본인 상담 + 보호자가 "보내준" 상담만 보인다.
-//  - 보호자(사위·딸): 한 팀이다. 보호자들이 나눈 상담 전부 + 장모님 본인 상담(읽기)이 보인다.
-//  - 보호자는 자기 팀 상담 중 원하는 것을 골라 장모님께 보낼 수 있다 (shared = TRUE).
+//  - 기록 주인: 본인 상담 + 보호자가 "보내준" 상담만 보인다.
+//  - 보호자(가족): 한 팀이다. 보호자들이 나눈 상담 전부 + 기록 주인 본인 상담(읽기)이 보인다.
+//  - 보호자는 자기 팀 상담 중 원하는 것을 골라 기록 주인에게 보낼 수 있다 (shared = TRUE).
 
 function chatAuthor_(c) { return String(c.author_id || c.user_id); }
 function isShared_(c) { return String(c.shared).toUpperCase() === 'TRUE'; }
@@ -204,7 +204,7 @@ function api_clearChats(token, recordId, ownerId) {
   });
 }
 
-/** 보호자 상담 중 골라서 기록 주인(장모님)에게 보내기 / 보내기 취소 */
+/** 보호자 상담 중 골라서 기록 주인에게 보내기 / 보내기 취소 */
 function api_shareChats(token, messageIds, shared, ownerId) {
   const s = requireSession_(token);
   const owner = resolveOwner_(s, ownerId, 'read');

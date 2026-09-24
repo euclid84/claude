@@ -105,8 +105,15 @@ function dcall() {
   return call.apply(null, args);
 }
 
-/** "장모님" 같은 아이디에 "님"이 겹치지 않게 */
-function nim(name) { name = String(name || ''); return /님$/.test(name) ? name : name + '님'; }
+/** 부를 때: 가족 호칭(아빠·어머님 등)이나 이미 "님"이 붙은 이름은 그대로, 나머지는 "님"을 붙인다 */
+const KIN_RE = /(님|아빠|엄마|아버지|어머니|할머니|할아버지|어른|형|누나|언니|오빠|여보|동생|삼촌|이모|고모|아들|딸|자기)$/;
+function nim(name) { name = String(name || ''); return KIN_RE.test(name) ? name : name + '님'; }
+/** 받침 유무로 조사 고르기: josa('아빠','이','가') → '아빠가', josa('어머님','이','가') → '어머님이' */
+function hasBatchim(w) {
+  const c = String(w).charCodeAt(String(w).length - 1);
+  return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 !== 0;
+}
+function josa(w, withB, withoutB) { return w + (hasBatchim(w) ? withB : withoutB); }
 
 function canWrite() { return S.perm === 'owner' || S.perm === 'write'; }
 function viewingOther() { return !!S.ownerId; }
@@ -190,6 +197,7 @@ async function doLogin() {
     S.token = res.token;
     S.username = res.username;
     S.me = { userId: res.userId, username: res.username, dek: await Crypt.importDek(dekRaw), dekRaw: dekRaw, privateKey: null };
+    S.me.publicKey = res.publicKey || null;
     await setupKeys(res.encPrivateKey);
     await loadPeople();
     await selectPerson(null, true);
@@ -311,7 +319,7 @@ async function setupKeys(encPrivateKey) {
   }
   const kp = await Crypt.newKeypair();
   const res = await call('api_setKeypair', S.token, kp.publicKey, await Crypt.encryptBlobB64(S.me.dek, kp.privatePkcs8));
-  if (!res.already) S.me.privateKey = kp.privateKey;
+  if (!res.already) { S.me.privateKey = kp.privateKey; S.me.publicKey = kp.publicKey; }
 }
 
 /** 나를 보호자로 추가한 가족들의 데이터키를 내 개인키로 풀어 둔다 */
@@ -322,7 +330,7 @@ async function loadPeople() {
   for (const sh of shared) {
     try {
       const raw = await Crypt.decryptWithPrivateKey(S.me.privateKey, sh.encDek);
-      S.people.push({ ownerId: sh.ownerId, username: sh.username, dek: await Crypt.importDek(raw), perm: sh.perm, shareId: sh.shareId });
+      S.people.push({ ownerId: sh.ownerId, username: sh.username, dek: await Crypt.importDek(raw), dekRaw: raw, perm: sh.perm, shareId: sh.shareId, managed: !!sh.managed });
     } catch (e) { console.warn('공유 키를 열 수 없음', sh.username); }
   }
 }
@@ -330,7 +338,7 @@ async function loadPeople() {
 /** 누구의 기록을 볼지 바꾼다 (null = 본인) */
 async function selectPerson(ownerId, silent) {
   const p = S.people.find(function (x) { return x.ownerId === ownerId; }) || S.people[0];
-  S.ownerId = p.ownerId; S.dek = p.dek; S.perm = p.perm; S.viewName = p.username;
+  S.ownerId = p.ownerId; S.dek = p.dek; S.perm = p.perm; S.viewName = p.username; S.managed = !!p.managed;
   S.filter = '전체'; S.search = '';
   if (!silent) loading(nim(p.username) + '의 기록을 불러오는 중…');
   await loadAll();
@@ -393,8 +401,10 @@ function viewHome() {
       return '<button class="chip' + (p.ownerId === S.ownerId ? ' on' : '') + '" data-p="' + i + '">' +
         (p.ownerId ? '👤 ' + esc(p.username) : '🙋 나') + '</button>';
     }).join('') + '</div>' : '') +
-    (viewingOther() ? '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
-      (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>' : '') +
+    (viewingOther() ? (S.managed
+      ? '<p class="notice">내가 대신 관리하는 <b>' + esc(nim(S.viewName)) + '</b>의 기록이에요.</p>'
+      : '<p class="notice">보호자로 <b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
+        (canWrite() ? ' (등록·수정 가능)' : ' (보기 전용)') + '. 보호자끼리 상담은 함께 보고, 골라서 보내드릴 수 있어요.</p>') : '') +
     '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
     (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
@@ -1088,11 +1098,11 @@ async function viewChat(recordId, startTab) {
 
   function bubble(m, i, list) {
     let label = '';
-    if (!guardian && !m.fromOwner) label = '👪 ' + nim(m.authorName) + (m.role === 'user' ? '이 물어본 것' : '이 보내준 답변');
+    if (!guardian && !m.fromOwner) label = '👪 ' + josa(nim(m.authorName), '이', '가') + (m.role === 'user' ? ' 물어본 것' : ' 보내준 답변');
     else if (guardian && tab === 'team' && m.role === 'user' && !m.mine) label = nim(m.authorName) + '의 질문';
     const cls = (!guardian && !m.fromOwner) ? 'family' : (m.role === 'user' ? 'user' : 'model');
     let actions = '';
-    if (guardian && tab === 'team' && m.role === 'model') {
+    if (guardian && !S.managed && tab === 'team' && m.role === 'model') {
       actions = m.shared
         ? '<div class="msg-act">✓ ' + esc(ownerName) + '께 보냄 <button class="link" data-unshare="' + i + '">취소</button></div>'
         : '<div class="msg-act"><button class="link" data-share="' + i + '">📤 ' + esc(ownerName) + '께 보내기</button></div>';
@@ -1107,12 +1117,12 @@ async function viewChat(recordId, startTab) {
     const clearable = myThread().length > 0 && canAsk;
     render(
       header(isAll ? '전체 기록 상담' : (rec.data.title || '상담'), true, clearable ? '<button class="icon" id="clear">🗑</button>' : '') +
-      (guardian ? '<div class="chips">' +
+      (guardian && !S.managed ? '<div class="chips">' +
         '<button class="chip' + (tab === 'team' ? ' on' : '') + '" data-tab="team">👪 보호자 상담</button>' +
         '<button class="chip' + (tab === 'owner' ? ' on' : '') + '" data-tab="owner">👤 ' + esc(ownerName) + ' 상담 (' + all.filter(function (m) { return m.fromOwner; }).length + ')</button>' +
         '</div>' : '') +
-      (guardian && tab === 'team' ? '<p class="muted">보호자끼리 함께 보는 상담이에요. 답변 아래 <b>📤 보내기</b>를 누르면 ' + esc(ownerName) + '께도 보여요.</p>' : '') +
-      (guardian && tab === 'owner' ? '<p class="muted">' + esc(ownerName) + '이 직접 나눈 상담이에요 (읽기만 가능).</p>' : '') +
+      (guardian && tab === 'team' && !S.managed ? '<p class="muted">보호자끼리 함께 보는 상담이에요. 답변 아래 <b>📤 보내기</b>를 누르면 ' + esc(ownerName) + '께도 보여요.</p>' : '') +
+      (guardian && tab === 'owner' ? '<p class="muted">' + esc(josa(ownerName, '이', '가')) + ' 직접 나눈 상담이에요 (읽기만 가능).</p>' : '') +
       '<p class="notice">AI 설명은 참고용입니다. 진단·처방은 반드시 담당 의사와 상의하세요. 응급 상황은 119.</p>' +
       '<div class="chat">' +
       (list.length ? '' : (canAsk
@@ -1231,7 +1241,7 @@ function viewSettings() {
   render(
     header('설정', true) +
     (canWrite() ? '<div class="card click" id="doc"><h3>👩‍⚕️ 의사 선생님 설정' + (viewingOther() ? ' (' + esc(nim(S.viewName)) + ')' : '') + '</h3><p class="muted">말투, 설명 수준, 건강 정보, 추가 지시사항</p></div>' : '') +
-    '<div class="card click" id="guard"><h3>👪 보호자(가족) 관리</h3><p class="muted">내 기록을 볼 수 있는 가족 정하기 · 내가 챙겨보는 가족</p></div>' +
+    '<div class="card click" id="guard"><h3>👪 가족 관리</h3><p class="muted">가족 추가 · 내 기록을 볼 가족 정하기 · 챙겨보는 가족</p></div>' +
     '<div class="card"><h3>🔠 글씨 크기</h3><div class="seg">' + FONT_SIZES.map(function (f) {
       return '<button data-fs="' + f[0] + '" class="' + (fontSize() === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
     }).join('') + '</div><p class="muted" style="margin-top:10px">첫 화면 위의 <b>가</b> 버튼으로도 바꿀 수 있어요.</p></div>' +
@@ -1251,58 +1261,98 @@ function viewSettings() {
 
 const PERM_LABEL = { read: '보기만', write: '보기 + 대신 등록·수정' };
 
+/**
+ * 보호자 목록 + 추가 폼 (내 기록 또는 내가 관리하는 가족 프로필)
+ * target: { ownerId(null=나), name, dekRaw }
+ */
+async function guardianSection(target, onChange) {
+  const list = await call('api_listGuardians', S.token, target.ownerId);
+  const others = list.filter(function (g) { return g.userId !== (S.me && S.me.userId); });
+  const html = '<div class="card"><h3>' + (target.ownerId ? esc(nim(target.name)) + ' 기록을 볼 수 있는 가족' : '내 기록을 볼 수 있는 가족') + '</h3>' +
+    '<p class="muted">여기 추가한 사람만 기록과 상담 내역을 볼 수 있어요.</p>' +
+    (others.length ? '<ul class="tests">' + others.map(function (g) {
+      return '<li style="cursor:default"><div class="nm">' + esc(g.username) + '<small>' + esc(PERM_LABEL[g.perm] || g.perm) + '</small></div>' +
+        '<button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button></li>';
+    }).join('') + '</ul>' : '<p>아직 없어요.</p>') +
+    '<hr><label for="gname">추가할 가족의 아이디</label><input id="gname" autocapitalize="none" placeholder="예) 아내가 쓰는 아이디">' +
+    '<label>권한</label>' + radioGroup('perm', target.ownerId ? 'write' : 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
+    '<p style="margin-top:12px"><button class="primary block" id="addG">보호자로 추가</button></p>' +
+    '<p class="muted">추가할 가족이 먼저 가입해서 한 번 로그인해 있어야 해요.</p></div>';
+
+  function bind() {
+    on('#addG', 'click', async function () {
+      const name = val('#gname');
+      const perm = ($('input[name="perm"]:checked') || {}).value || 'read';
+      if (!name) return showError(new Error('가족의 아이디를 입력해 주세요.'));
+      try {
+        loading('확인 중…');
+        const u = await call('api_findUser', S.token, name);
+        done();
+        const whose = target.ownerId ? nim(target.name) + '의' : '내';
+        const ok = await confirmBox(josa(nim(u.username), '이', '가') + ' ' + whose + ' 진료기록과 상담 내역을 볼 수 있게 됩니다' +
+          (perm === 'write' ? ' (대신 등록·수정도 가능)' : '') + '. 추가할까요?', '추가');
+        if (!ok) return;
+        loading('추가하는 중…');
+        const encDek = await Crypt.encryptForPublicKey(u.publicKey, target.dekRaw);
+        await call('api_addGuardian', S.token, u.userId, encDek, perm, target.ownerId);
+        toast(josa(nim(u.username), '을', '를') + ' 보호자로 추가했습니다.');
+        await onChange();
+      } catch (e) { showError(e); }
+    });
+    on('[data-rm]', 'click', async function () {
+      const id = this.getAttribute('data-rm'), name = this.getAttribute('data-name');
+      if (!(await confirmBox(josa(nim(name), '이', '가') + ' 더 이상 이 기록을 볼 수 없게 할까요?', '해제'))) return;
+      try { loading(); await call('api_removeShare', S.token, id); toast('해제했습니다.'); await onChange(); } catch (e) { showError(e); }
+    });
+  }
+  return { html: html, bind: bind };
+}
+
 async function viewGuardians() {
   loading();
-  const mine = await call('api_listGuardians', S.token);
+  const mine = await guardianSection({ ownerId: null, name: S.me.username, dekRaw: S.me.dekRaw }, viewGuardians);
   done();
   const others = S.people.filter(function (p) { return p.ownerId; });
   render(
-    header('보호자(가족) 관리', true) +
-    '<div class="card"><h3>내 기록을 볼 수 있는 가족</h3>' +
-    '<p class="muted">여기 추가한 사람만 내 기록과 상담 내역을 볼 수 있어요. 추가하지 않은 가족은 볼 수 없습니다.</p>' +
-    (mine.length ? '<table>' + mine.map(function (g) {
-      return '<tr><td><b>' + esc(g.username) + '</b><div class="muted">' + esc(PERM_LABEL[g.perm] || g.perm) + '</div></td>' +
-        '<td style="text-align:right"><button class="danger" data-rm="' + esc(g.shareId) + '" data-name="' + esc(g.username) + '">해제</button></td></tr>';
-    }).join('') + '</table>' : '<p>아직 없어요.</p>') +
-    '<hr><label for="gname">추가할 가족의 아이디</label><input id="gname" autocapitalize="none" placeholder="예) 사위 또는 딸이 쓰는 아이디">' +
-    '<label>권한</label>' + radioGroup('perm', 'read', [['read', PERM_LABEL.read], ['write', PERM_LABEL.write]]) +
-    '<p style="margin-top:12px"><button class="primary block" id="addG">보호자로 추가</button></p>' +
-    '<p class="muted">추가할 가족이 먼저 가입해서 한 번 로그인해 있어야 해요.</p></div>' +
+    header('👪 가족 관리', true) +
+    '<div class="card"><h3>➕ 가족 추가 (내가 대신 관리)</h3>' +
+    '<p class="muted">앱을 직접 안 쓰시는 가족(예: 아버지, 어머니)의 기록을 내가 올리고 관리해요. 가입은 필요 없어요.</p>' +
+    '<label for="pname">이름 또는 호칭</label><input id="pname" maxlength="20" placeholder="예) 아빠, 어머님, 장인어른">' +
+    '<p style="margin-top:12px"><button class="primary block" id="addP">가족 추가</button></p></div>' +
 
     '<div class="card"><h3>내가 챙겨보는 가족</h3>' +
-    (others.length ? '<table>' + others.map(function (p) {
-      return '<tr><td><b>' + esc(p.username) + '</b><div class="muted">' + esc(PERM_LABEL[p.perm] || p.perm) + '</div></td>' +
-        '<td style="text-align:right"><button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button></td></tr>';
-    }).join('') + '</table>' : '<p class="muted">나를 보호자로 추가한 가족이 없어요.</p>') + '</div>'
+    (others.length ? '<ul class="tests">' + others.map(function (p) {
+      const badge = p.managed ? '내가 대신 관리' : (PERM_LABEL[p.perm] || p.perm);
+      return '<li style="cursor:default"><div class="nm">' + esc(p.username) + '<small>' + esc(badge) + '</small></div>' +
+        (p.managed && p.perm === 'write'
+          ? '<button class="soft" data-manage="' + esc(p.ownerId) + '">관리</button>'
+          : '<button data-leave="' + esc(p.shareId) + '" data-name="' + esc(p.username) + '">그만 보기</button>') + '</li>';
+    }).join('') + '</ul>' : '<p class="muted">아직 없어요. 위에서 가족을 추가하거나, 가족이 나를 보호자로 추가하면 여기 나타나요.</p>') + '</div>' +
+
+    mine.html
   );
   bindBack(viewSettings);
+  mine.bind();
 
-  on('#addG', 'click', async function () {
-    const name = val('#gname');
-    const perm = ($('input[name="perm"]:checked') || {}).value || 'read';
-    if (!name) return showError(new Error('가족의 아이디를 입력해 주세요.'));
+  on('#addP', 'click', async function () {
+    const name = val('#pname');
+    if (!name) return showError(new Error('이름 또는 호칭을 입력해 주세요.'));
+    if (!S.me.publicKey) return showError(new Error('다시 로그인한 뒤 시도해 주세요.'));
     try {
-      loading('확인 중…');
-      const u = await call('api_findUser', S.token, name);
+      loading(nim(name) + ' 프로필을 만드는 중…');
+      const dekRaw = Crypt.newDekRaw();
+      const res = await call('api_createProfile', S.token, name, await Crypt.encryptForPublicKey(S.me.publicKey, dekRaw));
+      await loadPeople();
+      await selectPerson(res.ownerId, true);
       done();
-      const ok = await confirmBox(nim(u.username) + '이 내 진료기록 전체를 볼 수 있게 됩니다' +
-        (perm === 'write' ? ' (대신 등록·수정도 가능)' : '') + '. 내가 AI 선생님과 나눈 상담 내역도 볼 수 있어요. 추가할까요?', '추가');
-      if (!ok) return;
-      loading('추가하는 중…');
-      const encDek = await Crypt.encryptForPublicKey(u.publicKey, S.me.dekRaw);
-      await call('api_addGuardian', S.token, u.userId, encDek, perm);
-      toast(nim(u.username) + '을 보호자로 추가했습니다.');
-      await viewGuardians();
+      toast(nim(name) + ' 프로필을 만들었어요. 결과지를 올려 보세요.');
+      viewHome();
     } catch (e) { showError(e); }
   });
-  on('[data-rm]', 'click', async function () {
-    const id = this.getAttribute('data-rm'), name = this.getAttribute('data-name');
-    if (!(await confirmBox(nim(name) + '이 더 이상 내 기록을 볼 수 없게 할까요?', '해제'))) return;
-    try { loading(); await call('api_removeShare', S.token, id); toast('해제했습니다.'); await viewGuardians(); } catch (e) { showError(e); }
-  });
+  on('[data-manage]', 'click', function () { viewProfileManage(this.getAttribute('data-manage')).catch(showError); });
   on('[data-leave]', 'click', async function () {
     const id = this.getAttribute('data-leave'), name = this.getAttribute('data-name');
-    if (!(await confirmBox(nim(name) + '의 기록을 더 이상 보지 않을까요? (다시 보려면 ' + nim(name) + '이 다시 추가해야 해요)', '그만 보기'))) return;
+    if (!(await confirmBox(nim(name) + '의 기록을 더 이상 보지 않을까요? (다시 보려면 ' + josa(nim(name), '이', '가') + ' 다시 추가해야 해요)', '그만 보기'))) return;
     try {
       loading();
       await call('api_removeShare', S.token, id);
@@ -1310,6 +1360,71 @@ async function viewGuardians() {
       if (S.ownerId && !S.people.some(function (p) { return p.ownerId === S.ownerId; })) await selectPerson(null, true);
       toast('해제했습니다.');
       await viewGuardians();
+    } catch (e) { showError(e); }
+  });
+}
+
+/** 내가 대신 관리하는 가족 프로필: 이름 바꾸기 / 다른 가족과 함께 보기 / 본인 계정으로 넘겨주기 */
+async function viewProfileManage(ownerId) {
+  const p = S.people.find(function (x) { return x.ownerId === ownerId; });
+  if (!p) return viewGuardians();
+  loading();
+  const g = await guardianSection({ ownerId: ownerId, name: p.username, dekRaw: p.dekRaw }, function () { return viewProfileManage(ownerId); });
+  done();
+  render(
+    header(nim(p.username) + ' 관리', true) +
+    '<div class="card"><h3>이름(호칭)</h3><div class="row"><input id="rname" class="grow" style="flex:1" maxlength="20" value="' + esc(p.username) + '">' +
+    '<button id="rename">바꾸기</button></div></div>' +
+    g.html +
+    '<div class="card"><h3>🔑 본인 계정 만들어 드리기</h3>' +
+    '<p class="muted">' + esc(josa(nim(p.username), '이', '가')) + ' 직접 앱을 쓰고 싶어 하시면, 아이디와 비밀번호를 만들어 드리세요. ' +
+    '지금까지 기록은 그대로 넘어가고, 나는 계속 보호자로 남아요. <b>비밀번호는 ' + esc(josa(nim(p.username), '이', '가')) + ' 직접 입력하시게</b> 해주세요.</p>' +
+    '<label for="cu">아이디</label><input id="cu" autocapitalize="none">' +
+    '<label for="cp">비밀번호 (' + MIN_PW + '자 이상)</label><input id="cp" type="password" autocomplete="new-password">' +
+    '<label for="cp2">비밀번호 확인</label><input id="cp2" type="password" autocomplete="new-password">' +
+    '<p style="margin-top:12px"><button class="primary block" id="claim">계정 만들기</button></p></div>'
+  );
+  bindBack(viewGuardians);
+  g.bind();
+  on('#rename', 'click', async function () {
+    const name = val('#rname');
+    try {
+      loading(); await call('api_renameProfile', S.token, ownerId, name);
+      p.username = name; if (S.ownerId === ownerId) S.viewName = name;
+      done(); toast('이름을 바꿨어요.'); viewProfileManage(ownerId);
+    } catch (e) { showError(e); }
+  });
+  on('#claim', 'click', async function () {
+    const username = val('#cu'), pw = $('#cp').value, pw2 = $('#cp2').value;
+    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요.'));
+    if (pw !== pw2) return showError(new Error('비밀번호 확인이 일치하지 않습니다.'));
+    if (!(await confirmBox(josa(nim(p.username), '이', '가') + ' 아이디 "' + username + '"로 직접 로그인할 수 있게 됩니다. 만들까요?', '만들기'))) return;
+    try {
+      loading('계정을 만드는 중…');
+      const iter = 300000;
+      const kdfSalt = Crypt.newSalt(), rcKdfSalt = Crypt.newSalt();
+      const recoveryCode = Crypt.newRecoveryCode();
+      const pwd = await Crypt.derive(pw, kdfSalt, iter);
+      const rcd = await Crypt.derive(Crypt.normalizeRecoveryCode(recoveryCode), rcKdfSalt, iter);
+      const kp = await Crypt.newKeypair();
+      await call('api_claimProfile', S.token, ownerId, {
+        username: username, kdfSalt: kdfSalt, kdfIter: iter,
+        authKey: pwd.authKey, wrappedDek: await Crypt.wrapDek(pwd.kek, p.dekRaw),
+        rcKdfSalt: rcKdfSalt, rcAuthKey: rcd.authKey, wrappedDekRc: await Crypt.wrapDek(rcd.kek, p.dekRaw),
+        publicKey: kp.publicKey, encPrivateKey: await Crypt.encryptBlobB64(p.dek, kp.privatePkcs8)
+      });
+      p.managed = false; if (S.ownerId === ownerId) S.managed = false;
+      done();
+      render(
+        header(nim(p.username) + ' 계정 완성') +
+        '<div class="card"><p>이제 <b>' + esc(nim(p.username)) + '</b>' + (hasBatchim(nim(p.username)) ? '이' : '가') + ' 아이디 <b>' + esc(username) + '</b>와 방금 정한 비밀번호로 로그인할 수 있어요.</p>' +
+        '<p>비밀번호를 잊었을 때 쓰는 <b>복구코드</b>예요. 종이에 적어 ' + esc(nim(p.username)) + '께 드리세요.</p>' +
+        '<div class="code">' + esc(recoveryCode) + '</div>' +
+        '<label class="check" style="margin-top:16px"><input type="checkbox" id="ok">복구코드를 적어두었습니다</label>' +
+        '<p style="margin-top:16px"><button class="primary block" id="go" disabled>확인</button></p></div>'
+      );
+      on('#ok', 'change', function () { $('#go').disabled = !this.checked; });
+      on('#go', 'click', function () { viewGuardians().catch(showError); });
     } catch (e) { showError(e); }
   });
 }

@@ -96,7 +96,8 @@ function api_login(username, authKey) {
     userId: String(user.user_id),
     username: String(user.username),
     wrappedDek: String(user.wrapped_dek),
-    encPrivateKey: user.public_key ? String(user.enc_private_key) : ''
+    encPrivateKey: user.public_key ? String(user.enc_private_key) : '',
+    publicKey: user.public_key ? String(user.public_key) : ''
   };
 }
 
