@@ -11,6 +11,28 @@
 const MAX_CELL_CHARS = 49000;       // 구글시트 셀 한도(50,000자) 여유분
 const MAX_IMAGE_B64_CHARS = 14500000; // 암호화된 사진/PDF 1개 최대 약 10MB
 
+/* ---------------- 한 번에 불러오기 ---------------- */
+
+/**
+ * 로그인 직후 필요한 것 한 번에: 권한 맞추기 → 나에게 공유된 가족 → 내 기록·의사 설정·가족이 보내준 설명
+ * (예전에는 5~7번 따로 불렀다. Apps Script는 호출마다 1~2초씩 걸려서 합쳤다)
+ */
+function api_home(token) {
+  let sync;
+  try { sync = api_syncAccess(token); }
+  catch (e) { sync = { tasks: [], pending: 0, removed: 0, changed: 0 }; }
+  return { sync: sync, shared: api_listSharedWithMe(token), data: api_loadOwner(token, true, null) };
+}
+
+/** 한 사람의 기록 화면에 필요한 것 한 번에: 기록 + 의사 설정 (+ withNotes 면 상담 전체) */
+function api_loadOwner(token, withNotes, ownerId) {
+  return {
+    records: api_listRecords(token, ownerId),
+    profile: api_getDoctorProfile(token, ownerId),
+    chats: withNotes ? api_listChats(token, '*', ownerId) : []
+  };
+}
+
 /* ---------------- 진료기록 ---------------- */
 
 function api_listRecords(token, ownerId) {
@@ -84,6 +106,7 @@ function api_saveRecords(token, items, ownerId) {
     });
     const values = rows.map(function (r) { return HEADERS.Records.map(function (h) { return cell_(r[h]); }); });
     sh.getRange(sh.getLastRow() + 1, 1, values.length, HEADERS.Records.length).setValues(values);
+    delete MEMO_.values[SHEETS.RECORDS];
     audit_(s.userId, 'record_create_batch', String(rows.length) + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordIds: rows.map(function (r) { return r.record_id; }) };
   });

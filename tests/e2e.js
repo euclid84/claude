@@ -34,7 +34,9 @@ Object.defineProperty(window.google.script, 'run', { get: makeRunner });`;
 
 async function newUserPage(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const calls = []; // 서버 호출 기록 (로그인 속도 검사용)
   await ctx.exposeFunction('__gas', (fn, argsJson) => {
+    calls.push(fn);
     try {
       const v = gas.ctx[fn].apply(null, JSON.parse(argsJson));
       return JSON.stringify({ value: v === undefined ? null : v });
@@ -43,6 +45,7 @@ async function newUserPage(browser) {
   await ctx.addInitScript(mock);
   await ctx.route('https://app.local/**', r => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
   const page = await ctx.newPage();
+  page.gasCalls = calls;
   page.on('pageerror', e => { console.log('PAGE ERROR', e.message); failures++; });
   await page.goto('https://app.local/');
   return page;
@@ -59,8 +62,10 @@ async function signupAndLogin(page, user, pw) {
   await page.check('#ok'); await page.click('#go');
   await login(page, user, pw);
 }
-async function login(page, user, pw) {
-  await page.fill('#u', user); await page.fill('#p', pw); await page.click('#login'); await waitIdle(page);
+async function login(page, user, pw, keep) {
+  await page.fill('#u', user); await page.fill('#p', pw);
+  if (!keep) await page.uncheck('#keep'); // 기본 흐름은 자동 로그인 없이 (자동 로그인은 따로 검사)
+  await page.click('#login'); await waitIdle(page);
   if (await page.$('#skip')) { await page.click('#skip'); await waitIdle(page); }
 }
 async function addManualRecord(page, title) {
@@ -332,6 +337,26 @@ async function addManualRecord(page, title) {
   await tr.screenshot({ path: OUT + '/trend_table.png', fullPage: true });
   await tr.click('.mx td.bad'); await waitIdle(tr);
   check((await bodyText(tr)).includes('검진'), '전체 표: 숫자를 누르면 그날 기록');
+
+  // 10-4) 로그인 속도: 서버 왕복 수, 이 휴대폰에서 자동 로그인
+  await tr.evaluate(() => viewSettings()); await waitIdle(tr);
+  await tr.click('#logout'); await waitIdle(tr);
+  tr.gasCalls.length = 0;
+  await login(tr, '수치', '1234', true);
+  check(JSON.stringify(tr.gasCalls) === JSON.stringify(['api_prelogin', 'api_login']), '로그인 속도: 비밀번호 로그인은 서버 왕복 2번 → ' + tr.gasCalls.join(','));
+  check((await bodyText(tr)).includes('기록 4건'), '로그인 속도: 한 번에 받은 데이터로 홈 표시');
+  const tr2 = await tr.context().newPage();
+  tr2.on('pageerror', e => { console.log('PAGE ERROR', e.message); failures++; });
+  tr.gasCalls.length = 0;
+  await tr2.goto('https://app.local/'); await waitIdle(tr2);
+  check(await tr2.evaluate(() => !!S.token && S.records.length === 4 && !document.querySelector('#login')) && JSON.stringify(tr.gasCalls) === JSON.stringify(['api_login']),
+    '자동 로그인: 앱을 다시 열면 비밀번호 없이 바로 기록까지 (서버 왕복 1번) → ' + tr.gasCalls.join(','));
+  await tr2.evaluate(() => viewSettings()); await waitIdle(tr2);
+  await tr2.click('#logout'); await waitIdle(tr2);
+  const tr3 = await tr.context().newPage();
+  await tr3.goto('https://app.local/'); await waitIdle(tr3);
+  check(!!(await tr3.$('#login')) && !(await tr3.$('#resume')), '자동 로그인: 로그아웃하면 저장한 로그인 정보도 지움');
+  await tr2.close(); await tr3.close();
 
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);

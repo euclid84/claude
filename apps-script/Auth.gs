@@ -91,7 +91,8 @@ function api_signup(req) {
 }
 
 /** 로그인: 성공하면 세션 토큰과 (비밀번호로 감싼) 데이터 키를 돌려준다 */
-function api_login(username, authKey) {
+/** opts.home: 첫 화면에 필요한 데이터(api_home)까지 한 번에 돌려준다 — 서버 왕복을 줄여 로그인을 빠르게 */
+function api_login(username, authKey, opts) {
   username = normalizeUsername_(username);
   assertB64_(authKey, 'authKey');
   const user = findUserByUsername_(username);
@@ -104,8 +105,9 @@ function api_login(username, authKey) {
   }
   updateRow_(SHEETS.USERS, user._row, { failed_count: 0, locked_until: '', last_login_at: nowIso_() });
   audit_(user.user_id, 'login', '');
-  return {
-    token: createSession_(user),
+  const token = createSession_(user);
+  const out = {
+    token: token,
     userId: String(user.user_id),
     username: String(user.username),
     wrappedDek: String(user.wrapped_dek),
@@ -113,6 +115,9 @@ function api_login(username, authKey) {
     publicKey: user.public_key ? String(user.public_key) : '',
     isAdmin: isAdminUser_(user)
   };
+  // 공개키가 아직 없는 첫 로그인은 브라우저가 키를 만든 뒤 따로 불러온다
+  if (opts && opts.home && out.publicKey) out.home = api_home(token);
+  return out;
 }
 
 function api_logout(token) {

@@ -10,7 +10,7 @@
 
 const APP_NAME = '우리가족 진료기록';
 // 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 
 /** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
 function api_version() { return APP_VERSION; }
@@ -115,6 +115,7 @@ function setup() {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
   });
+  resetMemo_();
 
   const configSheet = ss.getSheetByName(SHEETS.CONFIG);
   const existingKeys = readAll_(SHEETS.CONFIG).map(function (r) { return r.key; });
@@ -124,12 +125,14 @@ function setup() {
       configSheet.appendRow([row[0], value, row[2]]);
     }
   });
+  resetMemo_();
   configSheet.setColumnWidth(2, 420);
   configSheet.getRange('B:B').setWrap(true);
 
   if (readAll_(SHEETS.PRESETS).length === 0) {
     const presetSheet = ss.getSheetByName(SHEETS.PRESETS);
     DEFAULT_PRESETS.forEach(function (row) { presetSheet.appendRow(row); });
+    resetMemo_();
     presetSheet.setColumnWidth(3, 520);
     presetSheet.getRange('C:C').setWrap(true);
   }
@@ -165,6 +168,7 @@ function ensureSchema_() {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
   });
+  resetMemo_();
   if (Number(props.getProperty('SCHEMA_VERSION') || 0) < 5) withLock_(migrateSharesToPolicy_);
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
@@ -224,12 +228,13 @@ function getConfigNumber_(key, fallback) {
 function setConfig_(key, value) {
   const row = readAll_(SHEETS.CONFIG).filter(function (r) { return r.key === key; })[0];
   if (row) updateRow_(SHEETS.CONFIG, row._row, { value: value });
-  else sheet_(SHEETS.CONFIG).appendRow([key, value, '']);
+  else { sheet_(SHEETS.CONFIG).appendRow([key, value, '']); delete MEMO_.values[SHEETS.CONFIG]; }
   CacheService.getScriptCache().remove('cfg_' + key);
 }
 
 function audit_(userId, action, detail) {
   try {
     sheet_(SHEETS.AUDIT).appendRow([new Date(), userId || '', action, detail || '']);
+    delete MEMO_.values[SHEETS.AUDIT];
   } catch (e) { /* 감사 로그 실패는 무시 */ }
 }

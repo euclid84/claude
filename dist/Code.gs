@@ -13,7 +13,7 @@
 
 const APP_NAME = '우리가족 진료기록';
 // 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 
 /** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
 function api_version() { return APP_VERSION; }
@@ -118,6 +118,7 @@ function setup() {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
   });
+  resetMemo_();
 
   const configSheet = ss.getSheetByName(SHEETS.CONFIG);
   const existingKeys = readAll_(SHEETS.CONFIG).map(function (r) { return r.key; });
@@ -127,12 +128,14 @@ function setup() {
       configSheet.appendRow([row[0], value, row[2]]);
     }
   });
+  resetMemo_();
   configSheet.setColumnWidth(2, 420);
   configSheet.getRange('B:B').setWrap(true);
 
   if (readAll_(SHEETS.PRESETS).length === 0) {
     const presetSheet = ss.getSheetByName(SHEETS.PRESETS);
     DEFAULT_PRESETS.forEach(function (row) { presetSheet.appendRow(row); });
+    resetMemo_();
     presetSheet.setColumnWidth(3, 520);
     presetSheet.getRange('C:C').setWrap(true);
   }
@@ -168,6 +171,7 @@ function ensureSchema_() {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
   });
+  resetMemo_();
   if (Number(props.getProperty('SCHEMA_VERSION') || 0) < 5) withLock_(migrateSharesToPolicy_);
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
@@ -227,13 +231,14 @@ function getConfigNumber_(key, fallback) {
 function setConfig_(key, value) {
   const row = readAll_(SHEETS.CONFIG).filter(function (r) { return r.key === key; })[0];
   if (row) updateRow_(SHEETS.CONFIG, row._row, { value: value });
-  else sheet_(SHEETS.CONFIG).appendRow([key, value, '']);
+  else { sheet_(SHEETS.CONFIG).appendRow([key, value, '']); delete MEMO_.values[SHEETS.CONFIG]; }
   CacheService.getScriptCache().remove('cfg_' + key);
 }
 
 function audit_(userId, action, detail) {
   try {
     sheet_(SHEETS.AUDIT).appendRow([new Date(), userId || '', action, detail || '']);
+    delete MEMO_.values[SHEETS.AUDIT];
   } catch (e) { /* 감사 로그 실패는 무시 */ }
 }
 
@@ -242,9 +247,18 @@ function audit_(userId, action, detail) {
  * 스프레드시트를 간단한 테이블(DB)처럼 쓰기 위한 도우미 함수
  */
 
+/*
+ * 한 번의 서버 호출 안에서 같은 시트를 여러 번 읽지 않도록 읽은 값을 잠깐 기억한다.
+ * (Apps Script는 호출마다 새로 시작하므로 호출이 끝나면 저절로 사라진다. 쓰기·잠금 때는 비운다)
+ */
+var MEMO_ = { ss: null, values: {} };
+function resetMemo_() { MEMO_ = { ss: MEMO_.ss, values: {} }; }
+
 function getSs_() {
+  if (MEMO_.ss) return MEMO_.ss;
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  MEMO_.ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  return MEMO_.ss;
 }
 
 function sheet_(name) {
@@ -255,11 +269,15 @@ function sheet_(name) {
 
 /** 시트 전체를 [{헤더: 값, _row: 행번호}] 배열로 읽는다 */
 function readAll_(name) {
-  const sh = sheet_(name);
-  const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2 || lastCol < 1) return [];
-  const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  let values = MEMO_.values[name];
+  if (!values) {
+    const sh = sheet_(name);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    values = lastRow < 2 || lastCol < 1 ? [] : sh.getRange(1, 1, lastRow, lastCol).getValues();
+    MEMO_.values[name] = values;
+  }
+  if (values.length < 2) return [];
   const headers = values[0];
   const out = [];
   for (let i = 1; i < values.length; i++) {
@@ -288,6 +306,7 @@ function cell_(v) {
 }
 
 function appendRow_(name, obj) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   const headers = HEADERS[name];
   const row = headers.map(function (h) { return cell_(obj[h]); });
@@ -296,6 +315,7 @@ function appendRow_(name, obj) {
 
 /** 지정한 열만 부분 수정 */
 function updateRow_(name, rowIndex, patch) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   const headers = HEADERS[name];
   Object.keys(patch).forEach(function (key) {
@@ -307,6 +327,7 @@ function updateRow_(name, rowIndex, patch) {
 
 /** 여러 행 삭제 (아래쪽부터 지워야 행번호가 밀리지 않는다) */
 function deleteRows_(name, rowIndexes) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   rowIndexes.slice().sort(function (a, b) { return b - a; })
     .forEach(function (r) { sh.deleteRow(r); });
@@ -316,6 +337,7 @@ function deleteRows_(name, rowIndexes) {
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
+  resetMemo_(); // 잠금을 기다리는 동안 다른 사람이 바꿨을 수 있으니 새로 읽는다
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
@@ -419,7 +441,8 @@ function api_signup(req) {
 }
 
 /** 로그인: 성공하면 세션 토큰과 (비밀번호로 감싼) 데이터 키를 돌려준다 */
-function api_login(username, authKey) {
+/** opts.home: 첫 화면에 필요한 데이터(api_home)까지 한 번에 돌려준다 — 서버 왕복을 줄여 로그인을 빠르게 */
+function api_login(username, authKey, opts) {
   username = normalizeUsername_(username);
   assertB64_(authKey, 'authKey');
   const user = findUserByUsername_(username);
@@ -432,8 +455,9 @@ function api_login(username, authKey) {
   }
   updateRow_(SHEETS.USERS, user._row, { failed_count: 0, locked_until: '', last_login_at: nowIso_() });
   audit_(user.user_id, 'login', '');
-  return {
-    token: createSession_(user),
+  const token = createSession_(user);
+  const out = {
+    token: token,
     userId: String(user.user_id),
     username: String(user.username),
     wrappedDek: String(user.wrapped_dek),
@@ -441,6 +465,9 @@ function api_login(username, authKey) {
     publicKey: user.public_key ? String(user.public_key) : '',
     isAdmin: isAdminUser_(user)
   };
+  // 공개키가 아직 없는 첫 로그인은 브라우저가 키를 만든 뒤 따로 불러온다
+  if (opts && opts.home && out.publicKey) out.home = api_home(token);
+  return out;
 }
 
 function api_logout(token) {
@@ -618,6 +645,28 @@ function assertB64_(v, name) {
 const MAX_CELL_CHARS = 49000;       // 구글시트 셀 한도(50,000자) 여유분
 const MAX_IMAGE_B64_CHARS = 14500000; // 암호화된 사진/PDF 1개 최대 약 10MB
 
+/* ---------------- 한 번에 불러오기 ---------------- */
+
+/**
+ * 로그인 직후 필요한 것 한 번에: 권한 맞추기 → 나에게 공유된 가족 → 내 기록·의사 설정·가족이 보내준 설명
+ * (예전에는 5~7번 따로 불렀다. Apps Script는 호출마다 1~2초씩 걸려서 합쳤다)
+ */
+function api_home(token) {
+  let sync;
+  try { sync = api_syncAccess(token); }
+  catch (e) { sync = { tasks: [], pending: 0, removed: 0, changed: 0 }; }
+  return { sync: sync, shared: api_listSharedWithMe(token), data: api_loadOwner(token, true, null) };
+}
+
+/** 한 사람의 기록 화면에 필요한 것 한 번에: 기록 + 의사 설정 (+ withNotes 면 상담 전체) */
+function api_loadOwner(token, withNotes, ownerId) {
+  return {
+    records: api_listRecords(token, ownerId),
+    profile: api_getDoctorProfile(token, ownerId),
+    chats: withNotes ? api_listChats(token, '*', ownerId) : []
+  };
+}
+
 /* ---------------- 진료기록 ---------------- */
 
 function api_listRecords(token, ownerId) {
@@ -691,6 +740,7 @@ function api_saveRecords(token, items, ownerId) {
     });
     const values = rows.map(function (r) { return HEADERS.Records.map(function (h) { return cell_(r[h]); }); });
     sh.getRange(sh.getLastRow() + 1, 1, values.length, HEADERS.Records.length).setValues(values);
+    delete MEMO_.values[SHEETS.RECORDS];
     audit_(s.userId, 'record_create_batch', String(rows.length) + (owner !== s.userId ? ' for ' + owner : ''));
     return { recordIds: rows.map(function (r) { return r.record_id; }) };
   });

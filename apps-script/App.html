@@ -6,8 +6,12 @@
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 const CHANGELOG = [
+  { v: '1.5', date: '2026-09-28', items: [
+    '⚡ 로그인이 훨씬 빨라졌어요.',
+    '이 휴대폰에서 한 번 로그인하면 다음부터는 비밀번호 없이 바로 열려요. 로그아웃하면 다시 비밀번호를 물어봐요.',
+    '로그인하는 동안 지금 무엇을 하고 있는지 알려드려요.'] },
   { v: '1.4', date: '2026-09-28', items: [
     '💡 검사 이름 옆에 "나쁜 콜레스테롤", "간 수치"처럼 무슨 검사인지 짧은 설명이 붙어요.',
     '검사 항목을 누르면 쉬운 설명과 정상 기준(정상·주의·높음 단계)이 나오고, 지금 수치가 어디쯤인지 표시해 드려요.',
@@ -200,14 +204,17 @@ function render(html, opts) {
 /* ---------------- 로그인 / 가입 / 복구 ---------------- */
 
 function viewLogin(message) {
+  const saved = rememberGet();
   render(
     '<div class="welcome"><div class="logo" aria-hidden="true">🩺</div><h1>우리가족 진료기록</h1>' +
     '<p>결과지를 올리면 AI 선생님이<br>쉽게 설명해 드려요</p></div>' +
     (message ? '<div class="notice">' + esc(message) + '</div>' : '') +
     '<div id="err" class="error" style="display:none"></div>' +
+    (saved ? '<p><button class="primary block" id="resume">👤 ' + esc(saved.u) + '(으)로 계속하기</button></p>' : '') +
     '<div class="card">' +
     '<label for="u">아이디</label><input id="u" autocomplete="username" autocapitalize="none">' +
     '<label for="p">비밀번호</label><input id="p" type="password" autocomplete="current-password">' +
+    '<label class="check" style="margin-top:14px"><input type="checkbox" id="keep" checked>이 휴대폰에서 로그인 유지 (다음부터 비밀번호 없이 바로 열려요)</label>' +
     '<p style="margin-top:16px"><button class="primary block" id="login">로그인</button></p>' +
     '</div>' +
     '<div class="stack"><button id="toSignup">처음이에요 (계정 만들기)</button>' +
@@ -216,35 +223,76 @@ function viewLogin(message) {
     '<p class="appver">v' + APP_VERSION + '</p>'
   );
   on('#login', 'click', doLogin);
+  on('#resume', 'click', function () { autoLogin(rememberGet()); });
   on('#p', 'keydown', function (e) { if (e.key === 'Enter') doLogin(); });
   on('#toSignup', 'click', viewSignup);
   on('#toRecover', 'click', viewRecover);
 }
 
+/* ---------------- 이 휴대폰에서 자동 로그인 ----------------
+ * 가족끼리 쓰는 앱이라 편하게: 로그인 확인값(authKey)과 데이터키를 이 기기에 저장해 두고
+ * 다음부터는 비밀번호 입력과 암호 키 계산(몇 초) 없이 바로 연다.
+ * 휴대폰을 열 수 있는 사람은 기록을 볼 수 있다. 로그아웃하거나 비밀번호를 바꾸면 지운다.
+ */
+const REMEMBER_KEY = 'fmr_login';
+function rememberGet() { try { const v = JSON.parse(storageGet(REMEMBER_KEY) || 'null'); return v && v.u && v.a && v.k ? v : null; } catch (e) { return null; } }
+function rememberSet(v) { storageSet(REMEMBER_KEY, JSON.stringify(v)); }
+function rememberClear() { try { window.localStorage.removeItem(REMEMBER_KEY); } catch (e) { /* 무시 */ } }
+
 async function doLogin() {
   const username = val('#u'), password = $('#p').value;
+  const keep = !$('#keep') || $('#keep').checked;
   if (!username || !password) return showError(new Error('아이디와 비밀번호를 입력해 주세요.'));
   try {
-    loading('로그인 중… (암호 키를 만드는 데 몇 초 걸릴 수 있어요)');
+    loading('암호 키를 만드는 중… (몇 초 걸려요)');
     const pre = await call('api_prelogin', username);
     const d = await Crypt.derive(password, pre.kdfSalt, pre.kdfIter);
-    const res = await call('api_login', username, d.authKey);
+    loading('기록을 불러오는 중…');
+    const res = await call('api_login', username, d.authKey, { home: true });
     const dekRaw = await Crypt.unwrapDek(d.kek, res.wrappedDek);
-    S.token = res.token;
-    S.username = res.username;
-    S.me = { userId: res.userId, username: res.username, dek: await Crypt.importDek(dekRaw), dekRaw: dekRaw, privateKey: null };
-    S.me.publicKey = res.publicKey || null;
-    S.me.isAdmin = !!res.isAdmin;
-    await setupKeys(res.encPrivateKey);
+    if (keep) rememberSet({ u: res.username, a: d.authKey, k: Crypt.b64(dekRaw) }); else rememberClear();
+    await finishLogin(res, dekRaw);
+  } catch (e) { showError(e); }
+}
+
+async function autoLogin(saved) {
+  if (!saved) return viewLogin();
+  try {
+    loading('여는 중…');
+    const res = await call('api_login', saved.u, saved.a, { home: true });
+    await finishLogin(res, Crypt.unb64(saved.k));
+  } catch (e) {
+    done();
+    const msg = String(e.message || e);
+    // 비밀번호가 바뀌었거나 계정이 없어졌으면 저장한 값을 지우고 다시 로그인하게 한다
+    if (/올바르지|잠겼|없습니다/.test(msg)) { rememberClear(); viewLogin('다시 로그인해 주세요.'); }
+    else viewLogin('연결이 잘 안 됐어요. 아래 "계속하기"를 다시 눌러 주세요.');
+  }
+}
+
+/** 로그인 뒤 공통: 키 준비 → 가족 목록 → 권한 맞추기 → 내 기록 (가능하면 서버에서 한 번에 받은 home 사용) */
+async function finishLogin(res, dekRaw) {
+  S.token = res.token;
+  S.username = res.username;
+  S.me = { userId: res.userId, username: res.username, dek: await Crypt.importDek(dekRaw), dekRaw: dekRaw, privateKey: null };
+  S.me.publicKey = res.publicKey || null;
+  S.me.isAdmin = !!res.isAdmin;
+  await setupKeys(res.encPrivateKey);
+  if (res.home) {
+    await loadPeople(res.home.shared);
+    try { await fulfillAccess(res.home.sync); } catch (e) { console.warn('권한 동기화 실패', e.message); }
+    await selectPerson(null, true, res.home.data);
+  } else {
+    // 처음 로그인(공개키를 방금 만든 경우): 예전처럼 하나씩
     await loadPeople();
     try {
       const sync = await syncAccess();
       if (sync.removed || sync.changed) await loadPeople();
     } catch (e) { console.warn('권한 동기화 실패', e.message); }
     await selectPerson(null, true);
-    done();
-    if (!S.doctor._saved) viewDoctor(true); else viewHome();
-  } catch (e) { showError(e); }
+  }
+  done();
+  if (!S.doctor._saved) viewDoctor(true); else viewHome();
 }
 
 async function viewSignup() {
@@ -333,6 +381,7 @@ function viewRecover() {
       await call('api_recoveryFinish', username, rcd.authKey, {
         kdfSalt: kdfSalt, kdfIter: pre.kdfIter, authKey: pwd.authKey, wrappedDek: await Crypt.wrapDek(pwd.kek, dekRaw)
       });
+      rememberClear();
       done();
       viewLogin('비밀번호가 바뀌었습니다. 새 비밀번호로 로그인해 주세요.');
     } catch (e) { showError(e); }
@@ -348,6 +397,7 @@ function logoutLocal(message) {
 
 async function doLogout() {
   const token = S.token;
+  rememberClear();
   logoutLocal('로그아웃되었습니다.');
   try { await call('api_logout', token); } catch (e) { /* 무시 */ }
 }
@@ -373,7 +423,11 @@ async function setupKeys(encPrivateKey) {
  * 데이터키는 브라우저에만 있으므로 암호화는 여기서 하고, 서버는 정책에 있는 것만 받는다.
  */
 async function syncAccess() {
-  const plan = await call('api_syncAccess', S.token);
+  return fulfillAccess(await call('api_syncAccess', S.token));
+}
+
+/** 정책상 내가 발급해 줘야 하는 열쇠를 암호화해서 등록 */
+async function fulfillAccess(plan) {
   const items = [];
   for (const t of plan.tasks) {
     const raw = dekRawOf(t.ownerId);
@@ -393,10 +447,11 @@ function dekRawOf(userId) {
 }
 
 /** 나를 보호자로 추가한 가족들의 데이터키를 내 개인키로 풀어 둔다 */
-async function loadPeople() {
+/** shared: 이미 받아 둔 목록(로그인 때 한 번에 받은 것). 없으면 서버에서 받는다 */
+async function loadPeople(shared) {
   S.people = [{ ownerId: null, username: S.me.username, dek: S.me.dek, perm: 'owner' }];
   if (!S.me.privateKey) return;
-  const shared = await call('api_listSharedWithMe', S.token);
+  if (!shared) shared = await call('api_listSharedWithMe', S.token);
   for (const sh of shared) {
     try {
       const raw = await Crypt.decryptWithPrivateKey(S.me.privateKey, sh.encDek);
@@ -406,38 +461,39 @@ async function loadPeople() {
 }
 
 /** 누구의 기록을 볼지 바꾼다 (null = 본인) */
-async function selectPerson(ownerId, silent) {
+async function selectPerson(ownerId, silent, preloaded) {
   const p = S.people.find(function (x) { return x.ownerId === ownerId; }) || S.people[0];
   S.ownerId = p.ownerId; S.dek = p.dek; S.perm = p.perm; S.viewName = p.username; S.managed = !!p.managed;
   S.filter = '전체'; S.search = '';
   if (!silent) loading(nim(p.username) + '의 기록을 불러오는 중…');
-  await loadAll();
+  if (preloaded) await applyLoad(preloaded); else await loadAll();
   if (!silent) { done(); viewHome(); }
 }
 
 /* ---------------- 데이터 불러오기 ---------------- */
 
+/** 지금 보고 있는 사람의 기록·의사 설정(·가족이 보내준 설명)을 한 번에 받는다 */
 async function loadAll() {
-  const rows = await dcall('api_listRecords', S.token);
+  await applyLoad(await dcall('api_loadOwner', S.token, !viewingOther()));
+}
+
+async function applyLoad(data) {
   const records = [];
-  for (const r of rows) {
+  for (const r of data.records) {
     try {
       records.push({ recordId: r.recordId, createdAt: r.createdAt, updatedAt: r.updatedAt, imageIds: r.imageIds, data: await Crypt.decryptJson(S.dek, r.encData) || {} });
     } catch (e) { console.warn('복호화 실패', r.recordId); }
   }
   S.records = records.sort(function (a, b) { return sortKey(b).localeCompare(sortKey(a)); });
 
-  const prof = await dcall('api_getDoctorProfile', S.token);
+  const prof = data.profile;
   S.presets = prof.presets || [];
   let doctor = null;
   if (prof.encData) { try { doctor = await Crypt.decryptJson(S.dek, prof.encData); } catch (e) { doctor = null; } }
   S.doctor = Object.assign({}, DEFAULT_DOCTOR, doctor || {}, { _saved: !!doctor });
 
   // 본인 화면: 보호자가 보내준 설명 모아두기
-  S.familyNotes = [];
-  if (!viewingOther()) {
-    try { S.familyNotes = (await loadChats('*')).filter(function (m) { return !m.fromOwner; }); } catch (e) { /* 없어도 됨 */ }
-  }
+  S.familyNotes = viewingOther() ? [] : (await decryptChats(data.chats || [])).filter(function (m) { return !m.fromOwner; });
 }
 
 /* ---------------- 홈 (기록 목록) ---------------- */
@@ -1423,7 +1479,10 @@ const SUGGEST_ALL = ['지난번과 비교해서 달라진 점이 있나요?', '�
 
 /** 상담 내역을 불러와 복호화 (recordId: 기록 ID / 'ALL' / '*') */
 async function loadChats(recordId) {
-  const rows = await dcall('api_listChats', S.token, recordId);
+  return decryptChats(await dcall('api_listChats', S.token, recordId));
+}
+
+async function decryptChats(rows) {
   rows.sort(function (a, b) { return a.createdAt.localeCompare(b.createdAt); });
   const out = [];
   for (const row of rows) {
@@ -2126,6 +2185,7 @@ function viewChangePassword() {
         oldAuthKey: oldD.authKey, kdfSalt: kdfSalt, kdfIter: pre.kdfIter,
         authKey: newD.authKey, wrappedDek: await Crypt.wrapDek(newD.kek, dekRaw)
       });
+      if (rememberGet()) rememberSet({ u: S.username, a: newD.authKey, k: Crypt.b64(dekRaw) });
       done(); toast('비밀번호를 변경했습니다.'); viewSettings();
     } catch (e) { showError(e); }
   });
@@ -2133,5 +2193,6 @@ function viewChangePassword() {
 
 /* ---------------- 시작 ---------------- */
 applyFontSize();
-viewLogin();
+// 이 휴대폰에 로그인을 저장해 두었으면 비밀번호 없이 바로 연다
+if (rememberGet()) autoLogin(rememberGet()); else viewLogin();
 </script>

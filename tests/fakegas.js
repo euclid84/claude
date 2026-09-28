@@ -91,6 +91,11 @@ function createGas({ geminiReply }) {
   };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(require('path').join(__dirname, '..', 'dist', 'Code.gs'), 'utf8'), ctx);
+  // 실제 Apps Script는 호출마다 새로 시작하므로, 바깥에서 부르는 api_* 마다 읽기 기억(MEMO_)을 비운다
+  Object.keys(ctx).filter(k => /^api_/.test(k) && typeof ctx[k] === 'function').forEach(k => {
+    const f = ctx[k];
+    ctx[k] = function () { ctx.resetMemo_(); return f.apply(this, arguments); };
+  });
   return { ctx, sheets, props, files };
 }
 

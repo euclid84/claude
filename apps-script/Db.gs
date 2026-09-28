@@ -2,9 +2,18 @@
  * 스프레드시트를 간단한 테이블(DB)처럼 쓰기 위한 도우미 함수
  */
 
+/*
+ * 한 번의 서버 호출 안에서 같은 시트를 여러 번 읽지 않도록 읽은 값을 잠깐 기억한다.
+ * (Apps Script는 호출마다 새로 시작하므로 호출이 끝나면 저절로 사라진다. 쓰기·잠금 때는 비운다)
+ */
+var MEMO_ = { ss: null, values: {} };
+function resetMemo_() { MEMO_ = { ss: MEMO_.ss, values: {} }; }
+
 function getSs_() {
+  if (MEMO_.ss) return MEMO_.ss;
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  MEMO_.ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  return MEMO_.ss;
 }
 
 function sheet_(name) {
@@ -15,11 +24,15 @@ function sheet_(name) {
 
 /** 시트 전체를 [{헤더: 값, _row: 행번호}] 배열로 읽는다 */
 function readAll_(name) {
-  const sh = sheet_(name);
-  const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2 || lastCol < 1) return [];
-  const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  let values = MEMO_.values[name];
+  if (!values) {
+    const sh = sheet_(name);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    values = lastRow < 2 || lastCol < 1 ? [] : sh.getRange(1, 1, lastRow, lastCol).getValues();
+    MEMO_.values[name] = values;
+  }
+  if (values.length < 2) return [];
   const headers = values[0];
   const out = [];
   for (let i = 1; i < values.length; i++) {
@@ -48,6 +61,7 @@ function cell_(v) {
 }
 
 function appendRow_(name, obj) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   const headers = HEADERS[name];
   const row = headers.map(function (h) { return cell_(obj[h]); });
@@ -56,6 +70,7 @@ function appendRow_(name, obj) {
 
 /** 지정한 열만 부분 수정 */
 function updateRow_(name, rowIndex, patch) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   const headers = HEADERS[name];
   Object.keys(patch).forEach(function (key) {
@@ -67,6 +82,7 @@ function updateRow_(name, rowIndex, patch) {
 
 /** 여러 행 삭제 (아래쪽부터 지워야 행번호가 밀리지 않는다) */
 function deleteRows_(name, rowIndexes) {
+  delete MEMO_.values[name];
   const sh = sheet_(name);
   rowIndexes.slice().sort(function (a, b) { return b - a; })
     .forEach(function (r) { sh.deleteRow(r); });
@@ -76,6 +92,7 @@ function deleteRows_(name, rowIndexes) {
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
+  resetMemo_(); // 잠금을 기다리는 동안 다른 사람이 바꿨을 수 있으니 새로 읽는다
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
