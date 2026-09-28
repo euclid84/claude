@@ -148,6 +148,44 @@
   .tests .val { text-align: right; font-weight: 800; font-size: 1.1em; white-space: nowrap; }
   .tests .val small { font-weight: 600; font-size: 0.72em; color: var(--ink-2); margin-left: 2px; }
   .tests .go { color: #9AA1AB; font-size: 1.1em; }
+  /* 검사 짧은 설명 ("나쁜 콜레스테롤") */
+  .sh { display: block; font-size: 0.8em; font-weight: 700; color: var(--primary-dark); }
+  .sh.big { font-size: 0.95em; margin-bottom: 2px; }
+  /* 이 수치는? 카드 */
+  .info h4 { margin: 18px 0 6px; font-size: 1em; }
+  .info h4 small { font-weight: 500; color: var(--ink-2); }
+  .info .normal { font-size: 1.15em; font-weight: 800; margin: 0; }
+  .info .mean { margin: 10px 0 0; }
+  .info .mean b { color: var(--primary-dark); margin-right: 4px; }
+  .info .small { font-size: 0.8em; margin-top: 14px; }
+  .levels { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .levels li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px; border-radius: 14px; background: var(--bg); border: 2px solid transparent; }
+  .levels .lv { font-weight: 800; min-width: 5.5em; }
+  .levels .ok .lv { color: var(--good); } .levels .wa .lv { color: var(--warn); } .levels .bad .lv { color: var(--bad); }
+  .levels li.now { border-color: var(--primary); background: var(--primary-soft); }
+  .levels .here { margin-left: auto; color: var(--primary-dark); white-space: nowrap; }
+  /* 목록 / 전체 표 전환 */
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #EAE5DB; border-radius: 18px; margin: 4px 0 14px; }
+  .modes button { border: none; background: transparent; min-height: 52px; border-radius: 14px; color: var(--ink-2); padding: 8px; }
+  .modes button.on { background: var(--card); color: var(--primary-dark); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  /* 검사일별 전체 표: 첫 열(검사 이름)은 옆으로 밀어도 고정 */
+  .mxwrap { overflow-x: auto; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); margin: 8px 0; }
+  table.mx { border-collapse: separate; border-spacing: 0; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+  .mx th, .mx td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .mx thead th { background: #FBF9F5; font-weight: 800; line-height: 1.3; }
+  .mx thead th small { display: block; font-weight: 500; color: var(--ink-2); font-size: 0.85em; }
+  .mx .rowh { position: sticky; left: 0; z-index: 1; background: var(--card); text-align: left; white-space: normal; min-width: 7.5em; max-width: 9.5em; font-weight: 800; border-right: 1px solid var(--line); line-height: 1.3; }
+  .mx thead .rowh { background: #FBF9F5; z-index: 2; }
+  .mx tbody .rowh { cursor: pointer; }
+  .mx .rowh small { display: block; font-weight: 500; color: var(--ink-2); font-size: 0.85em; margin-top: 2px; }
+  .mx tr.grp th { text-align: left; background: var(--primary-soft); color: var(--primary-dark); font-weight: 800; padding: 6px 10px; }
+  .mx tr.grp th span { position: sticky; left: 10px; }
+  .mx td { font-weight: 700; cursor: pointer; }
+  .mx td.bad { background: var(--bad-bg); color: var(--bad); }
+  .mx td.warn { background: var(--warn-bg); color: var(--warn); }
+  .mx td.none { color: #B8BEC6; font-weight: 400; text-align: center; cursor: default; }
+  .mx td .ar { font-size: 0.75em; margin-left: 3px; }
+  .mx td small { display: block; font-size: 0.72em; font-weight: 500; }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }

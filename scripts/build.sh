@@ -21,7 +21,7 @@ mkdir -p dist
 } > dist/Code.gs
 python3 - <<'PY'
 src = open('apps-script/Index.html', encoding='utf-8').read()
-for name in ['Styles', 'Crypto', 'App']:
+for name in ['Styles', 'Crypto', 'TestInfo', 'App']:
     part = open('apps-script/%s.html' % name, encoding='utf-8').read()
     src = src.replace("<?!= include('%s'); ?>" % name, part.strip())
 assert '<?' not in src, 'template tag left in bundle'

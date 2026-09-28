@@ -8,6 +8,7 @@
 4. `scripts/build.sh`로 `dist/`를 다시 만든다. 두 파일의 버전이 다르면 빌드가 멈춘다.
 
 ## 개발
+- 검사 설명·정상 기준·병원별 다른 이름은 `apps-script/TestInfo.html` (정상 기준은 성인 국가건강검진 판정 기준을 따름).
 - 원본은 `apps-script/`, 붙여넣기용 묶음은 `dist/` (`scripts/build.sh`로 생성, 원본과 함께 커밋).
 - 테스트: `./scripts/build.sh && cd tests && npm install && npm test` (Chromium 경로는 `CHROMIUM_PATH` 환경변수로 바꿀 수 있음).
 - 업데이트 이력 화면 맨 아래 하트(♡)를 누르면 나오는 "어머님, 아버님 항상 건강하세요"는 사용자가 넣어 달라고 한 숨은 인사다. 지우지 않는다.

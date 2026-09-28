@@ -267,16 +267,17 @@ async function addManualRecord(page, title) {
 
   // 10) 수치 변화: 같은 검사를 여러 번 받은 기록 → 홈 버튼, 지켜볼 항목, 정상 범위 띠, 단위가 다른 기록 제외
   const tr = await newUserPage(browser);
-  await signupAndLogin(tr, '수치', 'trend-pass-123');
+  await signupAndLogin(tr, '수치', '1234');
+  check(await tr.evaluate(() => !!S.token), '비밀번호: 숫자 4자리로 가입·로그인');
   check(!(await tr.$('#trends')), '수치 변화: 기록이 없으면 버튼 없음');
   check(await tr.evaluate(() => JSON.stringify([parseRange('70-99'), parseRange('70~99'), parseRange('130 미만'), parseRange('≥60'), parseRange('40 이하'), parseRange('음성')])) ===
     JSON.stringify([{ lo: 70, hi: 99 }, { lo: 70, hi: 99 }, { lo: null, hi: 130 }, { lo: 60, hi: null }, { lo: null, hi: 40 }, null]), '수치 변화: 참고치 글자 읽기');
   const T = (name, value, unit, ref, flag) => ({ name, value, unit, reference_range: ref, flag });
   const trendRecs = [
-    ['2024-04-10', [T('LDL 콜레스테롤', '142', 'mg/dL', '130 미만', '높음'), T('eGFR', '95', 'mL/min', '60 이상', '정상'), T('혈색소', '14.5', 'g/dL', '13-17', '정상'), T('요단백', '음성', '', '음성', '판정없음')]],
+    ['2024-04-10', [T('LDL 콜레스테롤', '142', 'mg/dL', '130 미만', '높음'), T('eGFR', '95', 'mL/min', '60 이상', '정상'), T('혈색소', '14.5', 'g/dL', '13-17', '정상'), T('요단백', '음성', '', '음성', '판정없음'), T('SGOT', '28', 'U/L', '', '정상')]],
     ['2024-10-10', [T('LDL 콜레스테롤', '151', 'mg/dL', '130 미만', '높음'), T('eGFR', '92', 'mL/min', '60 이상', '정상'), T('혈색소', '14.9', 'g/dL', '13-17', '정상'), T('공복혈당', '98', 'mg/dL', '70~99', '정상')]],
     ['2025-04-10', [T('LDL 콜레스테롤', '139', 'mg/dL', '130 미만', '높음'), T('eGFR', '90', 'mL/min', '60 이상', '정상'), T('혈색소', '8.8', 'mmol/L', '', '정상')]],
-    ['2025-10-10', [T('LDL-콜레스테롤(계산)', '124', 'mg/dL', '130 미만', '정상'), T('eGFR', '87', 'mL/min', '60 이상', '정상'), T('혈색소', '14.6', 'g/dL', '13-17', '정상')]]
+    ['2025-10-10', [T('LDL-콜레스테롤(계산)', '124', 'mg/dL', '130 미만', '정상'), T('eGFR', '87', 'mL/min', '60 이상', '정상'), T('혈색소', '14.6', 'g/dL', '13-17', '정상'), T('AST(SGOT)', '32', 'IU/L', '', '정상')]]
   ];
   for (const [date, tests] of trendRecs) {
     await tr.evaluate(([date, tests]) => viewEdit(null, { title: date + ' 검진', date, record_type: '정기건강검진', hospital: '○○병원', tests }), [date, tests]);
@@ -289,22 +290,48 @@ async function addManualRecord(page, title) {
   await tr.click('#trends'); await waitIdle(tr);
   const trText = await bodyText(tr);
   check(trText.includes('지켜볼 항목 1') && trText.includes('정상 범위지만 3번 연속 내리고 있어요'), '수치 변화: 정상이어도 계속 내려가는 항목을 지켜볼 항목으로');
-  check(trText.includes('안정적인 항목 2') && trText.includes('한 번만 검사한 항목 2개'), '수치 변화: 안정적인 항목 / 한 번만 검사한 항목 분리');
-  check(await tr.evaluate(() => document.querySelectorAll('.tests.trend svg.spk').length === 3), '수치 변화: 여러 번 검사한 숫자 항목마다 작은 그래프');
-  check(await tr.evaluate(() => document.querySelectorAll('[data-series^="ldl"]').length === 1), '수치 변화: 이름이 조금 달라도(하이픈·괄호) 같은 항목으로 묶음');
+  check(trText.includes('안정적인 항목 3') && trText.includes('한 번만 검사한 항목 2개'), '수치 변화: 안정적인 항목 / 한 번만 검사한 항목 분리');
+  check(await tr.evaluate(() => document.querySelectorAll('.tests.trend svg.spk').length === 4), '수치 변화: 여러 번 검사한 숫자 항목마다 작은 그래프');
+  check(await tr.evaluate(() => document.querySelectorAll('[data-series="AST(SGOT)"], [data-series="SGOT"]').length === 1), '정리: 병원마다 다른 이름(SGOT / AST(SGOT))을 한 항목으로 묶음');
+  check(trText.includes('나쁜 콜레스테롤') && trText.includes('정상 130 미만'), '설명: 목록에 짧은 설명과 정상 기준');
+  check(await tr.evaluate(() => document.querySelectorAll('[data-series^="LDL"]').length === 1), '수치 변화: 이름이 조금 달라도(하이픈·괄호) 같은 항목으로 묶음');
   await tr.screenshot({ path: OUT + '/trend_list.png', fullPage: true });
   await tr.click('[data-series="혈색소"]'); await waitIdle(tr);
   check((await bodyText(tr)).includes('단위가 다른 기록 1건은 그래프에서 뺐어요'), '수치 변화: 단위가 다른 기록은 그래프에서 제외');
   await tr.click('#back'); await waitIdle(tr);
   check((await bodyText(tr)).includes('지켜볼 항목 1'), '수치 변화: 항목 그래프에서 뒤로 → 목록');
-  await tr.click('[data-series="ldl콜레스테롤"]'); await waitIdle(tr);
+  await tr.click('[data-series^="LDL"]'); await waitIdle(tr);
   check(await tr.evaluate(() => !!document.querySelector('svg rect[fill="#E6F4EA"]') && document.body.innerText.includes('▼ 15 내렸어요')), '수치 변화: 항목 그래프에 정상 범위 띠 + 지난번 대비');
+  check(await tr.evaluate(() => { const now = document.querySelector('.levels li.now'); return !!now && now.innerText.includes('정상') && now.innerText.includes('지금 124'); }), '설명: 정상 기준 단계표에서 지금 위치 표시');
+  check((await bodyText(tr)).includes('나쁜 콜레스테롤') && (await bodyText(tr)).includes('높으면'), '설명: 쉬운 설명과 높을 때 의미');
   await tr.screenshot({ path: OUT + '/trend_item.png', fullPage: true });
   await tr.click('[data-rec]'); await waitIdle(tr);
   check((await bodyText(tr)).includes('2025-10-10 검진'), '수치 변화: 날짜별 기록을 누르면 그날 기록으로');
+  check((await bodyText(tr)).includes('정상 130 미만') && (await bodyText(tr)).includes('나쁜 콜레스테롤'), '설명: 기록 상세 검사 목록에도 짧은 설명·정상 기준');
   await tr.click('[data-test]'); await waitIdle(tr);
   await tr.click('#back'); await waitIdle(tr);
   check((await bodyText(tr)).includes('2025-10-10 검진'), '기록 상세 → 항목 그래프 → 뒤로 → 기록 상세');
+
+  // 10-2) 결과지에 참고치가 없어도 사전의 정상 기준으로 띠 표시 (단위 IU/L = U/L)
+  await tr.evaluate(() => viewTrend('AST(SGOT)', viewTrends)); await waitIdle(tr);
+  check(await tr.evaluate(() => !!document.querySelector('svg rect[fill="#E6F4EA"]') && document.body.innerText.includes('정상 40 이하')), '설명: 참고치가 없으면 사전 기준으로 정상 범위 표시');
+  // 10-3) 검사일별 전체 표
+  await tr.click('#back'); await waitIdle(tr);
+  await tr.click('[data-mode="table"]'); await waitIdle(tr);
+  const mx = await tr.evaluate(() => ({
+    firstDate: document.querySelector('.mx thead th:nth-child(2)').innerText.replace(/\s/g, ''),
+    cols: document.querySelectorAll('.mx thead th').length,
+    rows: document.querySelectorAll('.mx tbody th.rowh').length,
+    groups: [...document.querySelectorAll('.mx tr.grp')].map(r => r.innerText.trim()),
+    ldl151: [...document.querySelectorAll('.mx td.bad')].some(td => td.innerText.startsWith('151'))
+  }));
+  check(mx.firstDate === '202510.10' && mx.cols === 5, '전체 표: 검사일이 열, 최근이 왼쪽 → ' + mx.firstDate + ' / ' + mx.cols);
+  check(mx.rows === 6, '전체 표: 검사마다 한 줄 (이름이 달라도 묶음) → ' + mx.rows);
+  check(JSON.stringify(mx.groups) === JSON.stringify(['혈당', '콜레스테롤', '간', '콩팥', '혈액', '소변']), '전체 표: 분류별로 묶음 → ' + mx.groups.join(','));
+  check(mx.ldl151, '전체 표: 범위 밖 칸은 색 표시');
+  await tr.screenshot({ path: OUT + '/trend_table.png', fullPage: true });
+  await tr.click('.mx td.bad'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('검진'), '전체 표: 숫자를 누르면 그날 기록');
 
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);

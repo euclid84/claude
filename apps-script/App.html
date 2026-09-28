@@ -6,8 +6,15 @@
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const CHANGELOG = [
+  { v: '1.4', date: '2026-09-28', items: [
+    '💡 검사 이름 옆에 "나쁜 콜레스테롤", "간 수치"처럼 무슨 검사인지 짧은 설명이 붙어요.',
+    '검사 항목을 누르면 쉬운 설명과 정상 기준(정상·주의·높음 단계)이 나오고, 지금 수치가 어디쯤인지 표시해 드려요.',
+    '결과지에 정상 범위가 안 적혀 있어도 일반적인 정상 기준을 보여드려요.',
+    '📋 수치 변화에서 "검사일별 전체 표"로 모든 검사 결과를 날짜별로 한눈에 볼 수 있어요.',
+    '병원마다 다르게 적힌 검사 이름(예: SGOT와 AST)을 같은 검사로 묶어 정리해요.',
+    '비밀번호를 4자리 이상이면 쓸 수 있어요. 숫자만 써도 돼요.'] },
   { v: '1.3', date: '2026-09-28', items: [
     '📈 수치 변화 메뉴가 생겼어요. 같은 검사를 여러 번 받았으면 수치가 어떻게 변했는지 그래프로 볼 수 있어요.',
     '지켜볼 수치(정상 범위 밖이거나, 정상이어도 계속 오르거나 내리는 수치)를 맨 위에 모아 보여드려요.',
@@ -31,7 +38,7 @@ const CHANGELOG = [
 ];
 const RECORD_TYPES = ['정기건강검진', '외래진료', '입원·수술', '검사결과', '처방·약', '문자·알림', '기타'];
 const TEST_FLAGS = ['정상', '높음', '낮음', '경계', '이상', '판정없음'];
-const MIN_PW = 8;
+const MIN_PW = 4; // 숫자 4자리도 가능 (가족이 쓰기 쉽게). 짧을수록 시트를 볼 수 있는 사람이 풀어보기 쉬워진다 — SETUP.md 보안 한계 참고
 
 const DEFAULT_DOCTOR = {
   presetId: '', doctorName: '', specialty: '가정의학과',
@@ -249,7 +256,7 @@ async function viewSignup() {
     '<div class="card">' +
     '<label for="inv">초대코드</label><input id="inv" autocapitalize="characters" placeholder="관리자에게 받은 코드">' +
     '<label for="u">아이디 (2~20자)</label><input id="u" autocapitalize="none" autocomplete="username">' +
-    '<label for="p">비밀번호 (' + MIN_PW + '자 이상)</label><input id="p" type="password" autocomplete="new-password">' +
+    '<label for="p">비밀번호 (' + MIN_PW + '자 이상, 숫자만도 돼요)</label><input id="p" type="password" autocomplete="new-password">' +
     '<label for="p2">비밀번호 확인</label><input id="p2" type="password" autocomplete="new-password">' +
     (info.admins && info.admins.length
       ? '<p class="notice" style="margin-top:14px">👑 가족 건강을 함께 챙길 수 있도록 <b>관리자(' + esc(info.admins.join(', ')) + ')</b>가 내 기록과 상담을 함께 볼 수 있어요. 다른 가족은 볼 수 없어요.</p>'
@@ -261,7 +268,7 @@ async function viewSignup() {
   bindBack(function () { viewLogin(); });
   on('#go', 'click', async function () {
     const username = val('#u'), pw = $('#p').value, pw2 = $('#p2').value, inviteCode = val('#inv');
-    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요.'));
+    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요. (숫자만 써도 돼요)'));
     if (pw !== pw2) return showError(new Error('비밀번호 확인이 일치하지 않습니다.'));
     try {
       loading('계정을 만드는 중…');
@@ -304,7 +311,7 @@ function viewRecover() {
     '<p class="muted">가입할 때 받은 복구코드로 새 비밀번호를 정할 수 있습니다. 기존 기록은 그대로 유지됩니다.</p>' +
     '<label for="u">아이디</label><input id="u" autocapitalize="none">' +
     '<label for="rc">복구코드</label><input id="rc" autocapitalize="characters" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX">' +
-    '<label for="p">새 비밀번호 (' + MIN_PW + '자 이상)</label><input id="p" type="password" autocomplete="new-password">' +
+    '<label for="p">새 비밀번호 (' + MIN_PW + '자 이상, 숫자만도 돼요)</label><input id="p" type="password" autocomplete="new-password">' +
     '<label for="p2">새 비밀번호 확인</label><input id="p2" type="password" autocomplete="new-password">' +
     '<p style="margin-top:16px"><button class="primary block" id="go">재설정</button></p>' +
     '</div>'
@@ -313,7 +320,7 @@ function viewRecover() {
   on('#go', 'click', async function () {
     const username = val('#u'), code = Crypt.normalizeRecoveryCode(val('#rc'));
     const pw = $('#p').value, pw2 = $('#p2').value;
-    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요.'));
+    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요. (숫자만 써도 돼요)'));
     if (pw !== pw2) return showError(new Error('비밀번호 확인이 일치하지 않습니다.'));
     try {
       loading('확인 중…');
@@ -1033,8 +1040,10 @@ function viewDetail(recordId) {
 
 function testTable(tests) {
   return '<ul class="tests">' + tests.map(function (t) {
-    const sub = [t.reference_range ? '참고치 ' + t.reference_range : '', t.note].filter(Boolean).join(' · ');
-    return '<li data-test="' + esc(t.name) + '"><div class="nm">' + esc(t.name) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>' +
+    const info = testInfo(t.name);
+    const sub = [normalLabel(t, info), t.note].filter(Boolean).join(' · ');
+    return '<li data-test="' + esc(t.name) + '"><div class="nm">' + esc(t.name) + (info ? '<span class="sh">' + esc(info.short) + '</span>' : '') +
+      (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>' +
       '<div class="val">' + esc(t.value) + '<small>' + esc(t.unit) + '</small><div>' + flagHtml(t.flag) + '</div></div>' +
       '<span class="go" aria-hidden="true">›</span></li>';
   }).join('') + '</ul>';
@@ -1075,7 +1084,38 @@ function viewChangelog() {
 
 // 같은 검사인지 비교할 이름: 공백·괄호 설명·하이픈 등 기호는 무시 ("LDL-콜레스테롤(계산)" = "LDL 콜레스테롤")
 function normName(s) { return String(s || '').replace(/\(.*?\)|[\s\-_·ㆍ]/g, '').toLowerCase(); }
-function normUnit(u) { return String(u || '').replace(/\s/g, '').toLowerCase(); }
+/** 검사 설명 사전(TestInfo)에서 찾기: 병원마다 다른 이름(SGOT, AST(SGOT) …)도 같은 검사로 */
+let TEST_INDEX = null;
+function testInfo(name) {
+  if (!TEST_INDEX) {
+    TEST_INDEX = {};
+    TEST_INFO.forEach(function (x, i) { x.order = i; x.names.forEach(function (n) { TEST_INDEX[normName(n)] = x; }); });
+  }
+  return TEST_INDEX[normName(name)] || null;
+}
+/** 같은 검사끼리 묶는 열쇠: 사전에 있으면 대표 이름, 없으면 정리한 이름 */
+function testKey(name) { const i = testInfo(name); return i ? '#' + i.names[0] : normName(name); }
+/** 사전의 정상 기준을 이 단위에 써도 되는지 (mg/dL 기준을 mmol/L 값에 쓰면 안 됨) */
+function unitOk(info, unit) {
+  if (!info.units) return true;
+  const u = normUnit(unit);
+  return info.units.some(function (x) { return x === '' ? u === '' : u.indexOf(x) === 0; });
+}
+/** "정상 130 미만": 결과지 참고치가 있으면 그것, 없으면 사전 기준 */
+function normalLabel(t, info) {
+  if (t.reference_range) return '정상 ' + t.reference_range;
+  if (info && info.normal && (!info.range || unitOk(info, t.unit))) return '정상 ' + info.normal;
+  return '';
+}
+function levelIndex(info, v) {
+  for (let i = 0; i < info.levels.length; i++) {
+    const up = info.levels[i][3];
+    if (up == null || v < up || (info.levels[i][4] && v === up)) return i;
+  }
+  return -1;
+}
+// 단위 비교용: 공백·대소문자 무시, 같은 단위의 다른 표기(IU/L = U/L, μ = u)는 같게
+function normUnit(u) { return String(u || '').replace(/\s/g, '').toLowerCase().replace(/[μµ]/g, 'u').replace(/^iu\/l$/, 'u/l'); }
 function toNum(v) { const s = String(v == null ? '' : v).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(s) ? parseFloat(s) : NaN; }
 
 /**
@@ -1099,7 +1139,7 @@ function collectSeries() {
   S.records.forEach(function (r) {
     const date = r.data.date || r.createdAt.slice(0, 10);
     (r.data.tests || []).forEach(function (t) {
-      const key = normName(t.name);
+      const key = testKey(t.name);
       if (!key) return;
       (map[key] = map[key] || []).push({ date: date, t: t, recordId: r.recordId, hospital: r.data.hospital || '', n: toNum(t.value) });
     });
@@ -1115,7 +1155,9 @@ function makeSeries(key, points) {
   const num = points.filter(function (p) { return !isNaN(p.n) && normUnit(p.t.unit) === unit; });
   let range = null;
   for (let i = num.length - 1; i >= 0 && !range; i--) range = parseRange(num[i].t.reference_range);
-  const s = { key: key, name: last.t.name, points: points, num: num, last: last, range: range };
+  const info = testInfo(last.t.name);
+  if (!range && info && info.range && unitOk(info, last.t.unit)) range = info.range; // 결과지에 참고치가 없으면 사전 기준
+  const s = { key: key, name: info ? info.names[0] : last.t.name, info: info, points: points, num: num, last: last, range: range };
   s.alert = isAbnormal(last.t);
   s.trend = trendText(s);
   return s;
@@ -1157,25 +1199,98 @@ function viewTrends() {
   once.sort(byRecent);
 
   const list = function (arr) { return '<div class="card"><ul class="tests trend">' + arr.map(seriesRow).join('') + '</ul></div>'; };
-  render(
-    header('📈 수치 변화', true) +
-    (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 수치예요.</p>' : '') +
-    (multi.length
+  const table = S.trendMode === 'table';
+  const listHtml = (multi.length
       ? (watch.length ? '<h2>⚠️ 지켜볼 항목 ' + watch.length + '</h2>' + list(watch) : '') +
         (calm.length ? '<h2>✓ 안정적인 항목 ' + calm.length + '</h2>' + list(calm) : '') +
         '<p class="muted">그래프의 초록 띠는 정상 범위예요. 항목을 누르면 크게 볼 수 있어요.</p>'
       : '<div class="card"><p>같은 검사를 두 번 이상 받은 기록이 쌓이면 여기서 변화를 볼 수 있어요.</p></div>') +
     (once.length ? '<div class="card"><details><summary>한 번만 검사한 항목 ' + once.length + '개</summary>' +
-      '<ul class="tests trend">' + once.map(seriesRow).join('') + '</ul></details></div>' : '')
+      '<ul class="tests trend">' + once.map(seriesRow).join('') + '</ul></details></div>' : '');
+  render(
+    header('📈 수치 변화', true) +
+    (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 수치예요.</p>' : '') +
+    (all.length ? '<div class="modes" role="tablist"><button role="tab" data-mode="list" class="' + (table ? '' : 'on') + '" aria-selected="' + !table + '">목록</button>' +
+      '<button role="tab" data-mode="table" class="' + (table ? 'on' : '') + '" aria-selected="' + table + '">검사일별 전체 표</button></div>' : '') +
+    (table ? trendTable(all) : listHtml)
   );
   bindBack(viewHome);
+  on('[data-mode]', 'click', function () { S.trendMode = this.getAttribute('data-mode'); viewTrends(); });
   on('[data-series]', 'click', function () { viewTrend(this.getAttribute('data-series'), viewTrends); });
+  on('td[data-rec]', 'click', function () { viewDetail(this.getAttribute('data-rec')); });
+}
+
+/**
+ * 검사일별 전체 표: 행 = 검사(분류별로 묶음), 열 = 검사한 날 (최근이 왼쪽 — 옆으로 밀지 않아도 최신 값이 보이게)
+ *  - 병원마다 이름이 달라도 사전 기준으로 한 줄에 모은다
+ *  - 범위 밖 칸은 색 + ▲▼(지난 검사 대비) 로 표시, 칸을 누르면 그날 기록으로
+ */
+function trendTable(all) {
+  if (!all.length) return '';
+  const dates = [];
+  all.forEach(function (s) { s.points.forEach(function (p) { if (dates.indexOf(p.date) < 0) dates.push(p.date); }); });
+  dates.sort().reverse();
+  const groups = {};
+  all.forEach(function (s) { const c = s.info ? s.info.cat : '기타'; (groups[c] = groups[c] || []).push(s); });
+  const cats = TEST_CATS.filter(function (c) { return groups[c]; });
+  let html = '<p class="muted">왼쪽이 가장 최근 검사예요. 옆으로 밀면 이전 검사가 나와요. 검사 이름을 누르면 설명과 그래프를, 숫자를 누르면 그날 결과지를 볼 수 있어요.</p>' +
+    '<div class="mxwrap"><table class="mx"><thead><tr><th class="rowh" scope="col">검사</th>' +
+    dates.map(function (d) { return '<th scope="col"><small>' + esc(d.slice(0, 4)) + '</small>' + esc(d.slice(5).replace('-', '.')) + '</th>'; }).join('') +
+    '</tr></thead><tbody>';
+  cats.forEach(function (c) {
+    html += '<tr class="grp"><th colspan="' + (dates.length + 1) + '"><span>' + esc(c) + '</span></th></tr>';
+    groups[c].sort(function (a, b) {
+      return (a.info ? a.info.order : 999) - (b.info ? b.info.order : 999) || a.name.localeCompare(b.name);
+    }).forEach(function (s) {
+      const unit = normUnit(s.last.t.unit);
+      html += '<tr><th class="rowh" scope="row" data-series="' + esc(s.last.t.name) + '">' + esc(s.name) +
+        '<small>' + esc(normalLabel(s.last.t, s.info) || s.last.t.unit || '') + '</small></th>';
+      dates.forEach(function (d) {
+        let p = null;
+        for (let i = s.points.length - 1; i >= 0; i--) if (s.points[i].date === d) { p = s.points[i]; break; }
+        if (!p) { html += '<td class="none">·</td>'; return; }
+        const idx = s.num.indexOf(p);
+        const ar = idx > 0 ? (p.n > s.num[idx - 1].n ? '▲' : p.n < s.num[idx - 1].n ? '▼' : '') : '';
+        const cls = !isAbnormal(p.t) ? '' : p.t.flag === '경계' ? 'warn' : 'bad';
+        html += '<td data-rec="' + esc(p.recordId) + '"' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(p.t.value) +
+          (ar ? '<span class="ar" aria-hidden="true">' + ar + '</span>' : '') +
+          (normUnit(p.t.unit) !== unit ? '<small>' + esc(p.t.unit) + '</small>' : '') + '</td>';
+      });
+      html += '</tr>';
+    });
+  });
+  return html + '</tbody></table></div>' +
+    '<div class="legend"><span><i style="background:var(--bad-bg);border:1px solid #E8B4AE"></i>범위 밖</span>' +
+    '<span><i style="background:var(--warn-bg);border:1px solid #EFD49A"></i>경계</span><span>▲▼ 지난 검사보다 오름·내림</span></div>';
+}
+
+/** 이 수치는? — 쉬운 설명, 정상 기준(단계), 지금 어디에 있는지 */
+function infoCard(s) {
+  const info = s.info;
+  if (!info) return '';
+  const v = s.num.length && s.num[s.num.length - 1] === s.last && unitOk(info, s.last.t.unit) ? s.last.n : NaN;
+  const lv = info.levels && !isNaN(v) ? levelIndex(info, v) : -1;
+  const rr = s.last.t.reference_range;
+  return '<div class="card info"><h3>💡 이 수치는?</h3><p>' + esc(info.desc) + '</p>' +
+    '<h4>정상 기준' + (info.unit ? ' <small>(' + esc(info.unit) + ')</small>' : '') + '</h4>' +
+    (info.levels
+      ? '<ul class="levels">' + info.levels.map(function (l, i) {
+          return '<li class="' + l[1] + (i === lv ? ' now' : '') + '"><span class="lv">' + esc(l[0]) + '</span><span>' + esc(l[2]) + '</span>' +
+            (i === lv ? '<b class="here">← 지금 ' + esc(s.last.t.value) + '</b>' : '') + '</li>';
+        }).join('') + '</ul>'
+      : '<p class="normal">' + esc(info.normal) + '</p>') +
+    (rr ? '<p class="muted">결과지에 적힌 정상 범위: <b>' + esc(rr) + '</b></p>' : '') +
+    (info.high ? '<p class="mean"><b>높으면</b> ' + esc(info.high) + '</p>' : '') +
+    (info.low ? '<p class="mean"><b>낮으면</b> ' + esc(info.low) + '</p>' : '') +
+    (info.note ? '<p class="mean">' + esc(info.note) + '</p>' : '') +
+    '<p class="muted small">일반적인 성인 기준이에요. 나이·성별·병원에 따라 조금 다를 수 있어서, 결과지 참고치와 의사 선생님 설명을 먼저 따르세요.</p></div>';
 }
 
 function seriesRow(s) {
   const d = seriesDiff(s);
-  const sub = [s.last.t.reference_range ? '참고치 ' + s.last.t.reference_range : '', s.points.length > 1 ? s.points.length + '회' : fmtDate(s.last.date)].filter(Boolean).join(' · ');
-  return '<li data-series="' + esc(s.key) + '"><div class="nm">' + esc(s.name) + '<small>' + esc(sub) + '</small></div>' +
+  const sub = [normalLabel(s.last.t, s.info), s.points.length > 1 ? s.points.length + '회' : fmtDate(s.last.date)].filter(Boolean).join(' · ');
+  return '<li data-series="' + esc(s.last.t.name) + '"><div class="nm">' + esc(s.name) + (s.info ? '<span class="sh">' + esc(s.info.short) + '</span>' : '') +
+    '<small>' + esc(sub) + '</small></div>' +
     (s.num.length >= 2 ? miniSpark(s) : '') +
     '<div class="val">' + esc(s.last.t.value) + '<small>' + esc(s.last.t.unit) + '</small>' +
     (s.alert ? '<div>' + flagHtml(s.last.t.flag) + '</div>'
@@ -1221,20 +1336,22 @@ function miniSpark(s) {
 }
 
 function viewTrend(testName, onBack) {
-  const key = normName(testName);
+  const key = testKey(testName);
   const s = collectSeries().find(function (x) { return x.key === key; });
   if (!s) return onBack();
   const last = s.last, d = seriesDiff(s);
   const skipped = s.points.filter(function (p) { return !isNaN(p.n) && s.num.indexOf(p) < 0; }).length;
   render(
     header(s.name, true) +
-    '<div class="card"><div class="muted">가장 최근 · ' + esc(fmtDate(last.date)) + '</div>' +
+    '<div class="card">' + (s.info ? '<div class="sh big">' + esc(s.info.short) + '</div>' : '') +
+    '<div class="muted">가장 최근 · ' + esc(fmtDate(last.date)) + '</div>' +
     '<div class="row" style="align-items:baseline"><span style="font-size:2.2em;font-weight:800;line-height:1.2">' + esc(last.t.value) + '</span>' +
     '<span class="muted">' + esc(last.t.unit) + '</span><span class="grow"></span>' + flagHtml(last.t.flag) + '</div>' +
     (d ? '<div class="muted">지난번(' + esc(fmtDate(d.prev.date)) + ')보다 <b style="color:var(--ink)">' +
       (d.diff > 0 ? '▲ ' + d.diff + ' 올랐어요' : d.diff < 0 ? '▼ ' + Math.abs(d.diff) + ' 내렸어요' : '변화 없어요') + '</b></div>' : '') +
-    (last.t.reference_range ? '<div class="muted">참고치 ' + esc(last.t.reference_range) + '</div>' : '') +
+    (normalLabel(last.t, s.info) ? '<div class="muted">' + esc(normalLabel(last.t, s.info)) + '</div>' : '') +
     (s.trend ? '<p class="why">' + esc(s.trend) + '</p>' : '') + '</div>' +
+    infoCard(s) +
     (s.num.length >= 2 ? '<div class="card"><h3>' + s.num.length + '번의 변화</h3>' + sparkline(s) +
       '<div class="legend">' + (s.range ? '<span><i class="band"></i>정상 범위</span>' : '') +
       '<span><i class="dot"></i>범위 밖</span></div>' +
@@ -1850,7 +1967,7 @@ async function viewProfileManage(ownerId) {
     '<div class="card"><h3>본인 계정으로 전환</h3>' +
     '<p class="muted">본인이 직접 앱을 쓰게 되면 아이디와 비밀번호를 만들어 전환합니다. 기존 기록은 유지되며 관리자는 계속 조회할 수 있습니다. 비밀번호는 본인이 직접 입력하도록 하세요.</p>' +
     '<label for="cu">아이디</label><input id="cu" autocapitalize="none">' +
-    '<label for="cp">비밀번호 (' + MIN_PW + '자 이상)</label><input id="cp" type="password" autocomplete="new-password">' +
+    '<label for="cp">비밀번호 (' + MIN_PW + '자 이상, 숫자만도 돼요)</label><input id="cp" type="password" autocomplete="new-password">' +
     '<label for="cp2">비밀번호 확인</label><input id="cp2" type="password" autocomplete="new-password">' +
     '<p style="margin-top:12px"><button class="primary" id="claim">계정 만들기</button></p></div>',
     { console: true }
@@ -1868,7 +1985,7 @@ async function viewProfileManage(ownerId) {
   });
   on('#claim', 'click', async function () {
     const username = val('#cu'), pw = $('#cp').value, pw2 = $('#cp2').value;
-    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요.'));
+    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요. (숫자만 써도 돼요)'));
     if (pw !== pw2) return showError(new Error('비밀번호 확인이 일치하지 않습니다.'));
     if (!(await confirmBox(p.username + ' 구성원이 아이디 "' + username + '"로 로그인할 수 있게 됩니다. 계속할까요?', '계정 만들기'))) return;
     try {
@@ -1986,7 +2103,7 @@ function viewChangePassword() {
     header('비밀번호 변경', true) +
     '<div class="card">' +
     '<label for="old">현재 비밀번호</label><input id="old" type="password" autocomplete="current-password">' +
-    '<label for="p">새 비밀번호 (' + MIN_PW + '자 이상)</label><input id="p" type="password" autocomplete="new-password">' +
+    '<label for="p">새 비밀번호 (' + MIN_PW + '자 이상, 숫자만도 돼요)</label><input id="p" type="password" autocomplete="new-password">' +
     '<label for="p2">새 비밀번호 확인</label><input id="p2" type="password" autocomplete="new-password">' +
     '<p style="margin-top:16px"><button class="primary block" id="go">변경</button></p>' +
     '<p class="muted">복구코드는 그대로 유지됩니다.</p></div>'
@@ -1994,7 +2111,7 @@ function viewChangePassword() {
   bindBack(viewSettings);
   on('#go', 'click', async function () {
     const old = $('#old').value, pw = $('#p').value, pw2 = $('#p2').value;
-    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요.'));
+    if (pw.length < MIN_PW) return showError(new Error('비밀번호는 ' + MIN_PW + '자 이상으로 해주세요. (숫자만 써도 돼요)'));
     if (pw !== pw2) return showError(new Error('비밀번호 확인이 일치하지 않습니다.'));
     try {
       loading('변경하는 중…');
