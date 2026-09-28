@@ -428,14 +428,15 @@ function viewHome() {
   const heroSub = latest
     ? '최근 기록 · ' + esc(fmtDate(latest.data.date)) + ' ' + esc(latest.data.title || '') + (latestAlerts ? ' · 확인할 항목 ' + latestAlerts + '개' : '')
     : (canWrite() ? '결과지를 올리면 AI 선생님이 쉽게 설명해 드려요.' : '아직 등록된 기록이 없어요.');
+  // 메뉴 순서: 결과지 올리기 → 수치 변화 → 선생님께 묻기 (세 개면 마지막 버튼을 한 줄 전체로)
   const actions = [];
   if (canWrite()) actions.push('<button id="add"><span class="ico">📷</span>결과지 올리기</button>');
-  if (S.records.length) actions.push('<button id="askAll"><span class="ico">💬</span>선생님께 묻기</button>');
   // 같은 검사를 두 번 이상 받았으면 "수치 변화" 버튼 (지켜볼 항목 수를 함께 보여준다)
   const trends = trendSeries();
   const watchCount = trends.filter(function (x) { return x.alert || x.trend; }).length;
-  const trendBtn = trends.length ? '<button id="trends" class="wide"><span class="ico">📈</span>수치 변화' +
-    (watchCount ? ' <span class="badge">지켜볼 항목 ' + watchCount + '</span>' : '') + '</button>' : '';
+  if (trends.length) actions.push('<button id="trends"><span class="ico">📈</span>수치 변화' +
+    (watchCount ? '<span class="badge">지켜볼 항목 ' + watchCount + '</span>' : '') + '</button>');
+  if (S.records.length) actions.push('<button id="askAll"' + (actions.length === 2 ? ' class="wide"' : '') + '><span class="ico">💬</span>선생님께 묻기</button>');
 
   render(
     header(viewingOther() ? '👪 가족 기록' : '🩺 진료기록', false,
@@ -449,7 +450,7 @@ function viewHome() {
       : '<p class="notice">' + (S.me.isAdmin ? '👑 관리자로 ' : '') + '<b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
         (canWrite() ? '' : ' (보기 전용)') + '. 상담 중 알려드리고 싶은 답변은 골라서 보내드릴 수 있어요.</p>') : '') +
     '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
-    (actions.length || trendBtn ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + trendBtn + '</div>' : '') + '</section>' +
+    (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
       const seen = storageGet(notesSeenKey()) || '';
       const total = S.familyNotes.filter(function (m) { return m.role === 'model'; }).length;

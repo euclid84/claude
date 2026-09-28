@@ -284,6 +284,7 @@ async function addManualRecord(page, title) {
   }
   await tr.evaluate(() => viewHome()); await waitIdle(tr);
   check(await tr.evaluate(() => { const b = document.querySelector('#trends'); return !!b && b.innerText.includes('지켜볼 항목 1'); }), '수치 변화: 홈에 버튼 + 지켜볼 항목 수');
+  check(await tr.evaluate(() => [...document.querySelectorAll('.hero .actions button')].map(b => b.id).join(',')) === 'add,trends,askAll', '홈 메뉴 순서: 결과지 올리기 → 수치 변화 → 선생님께 묻기');
   await tr.screenshot({ path: OUT + '/trend_home.png' });
   await tr.click('#trends'); await waitIdle(tr);
   const trText = await bodyText(tr);
