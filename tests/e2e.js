@@ -265,6 +265,46 @@ async function addManualRecord(page, title) {
   check(await stranger.evaluate(() => document.body.innerText.includes('지금은 새 계정을 만들 수 없습니다')), '콘솔: 가입 막기 → 가입 화면에서 차단 안내');
   await me.check('#allow'); await waitIdle(me);
 
+  // 10) 수치 변화: 같은 검사를 여러 번 받은 기록 → 홈 버튼, 지켜볼 항목, 정상 범위 띠, 단위가 다른 기록 제외
+  const tr = await newUserPage(browser);
+  await signupAndLogin(tr, '수치', 'trend-pass-123');
+  check(!(await tr.$('#trends')), '수치 변화: 기록이 없으면 버튼 없음');
+  check(await tr.evaluate(() => JSON.stringify([parseRange('70-99'), parseRange('70~99'), parseRange('130 미만'), parseRange('≥60'), parseRange('40 이하'), parseRange('음성')])) ===
+    JSON.stringify([{ lo: 70, hi: 99 }, { lo: 70, hi: 99 }, { lo: null, hi: 130 }, { lo: 60, hi: null }, { lo: null, hi: 40 }, null]), '수치 변화: 참고치 글자 읽기');
+  const T = (name, value, unit, ref, flag) => ({ name, value, unit, reference_range: ref, flag });
+  const trendRecs = [
+    ['2024-04-10', [T('LDL 콜레스테롤', '142', 'mg/dL', '130 미만', '높음'), T('eGFR', '95', 'mL/min', '60 이상', '정상'), T('혈색소', '14.5', 'g/dL', '13-17', '정상'), T('요단백', '음성', '', '음성', '판정없음')]],
+    ['2024-10-10', [T('LDL 콜레스테롤', '151', 'mg/dL', '130 미만', '높음'), T('eGFR', '92', 'mL/min', '60 이상', '정상'), T('혈색소', '14.9', 'g/dL', '13-17', '정상'), T('공복혈당', '98', 'mg/dL', '70~99', '정상')]],
+    ['2025-04-10', [T('LDL 콜레스테롤', '139', 'mg/dL', '130 미만', '높음'), T('eGFR', '90', 'mL/min', '60 이상', '정상'), T('혈색소', '8.8', 'mmol/L', '', '정상')]],
+    ['2025-10-10', [T('LDL-콜레스테롤(계산)', '124', 'mg/dL', '130 미만', '정상'), T('eGFR', '87', 'mL/min', '60 이상', '정상'), T('혈색소', '14.6', 'g/dL', '13-17', '정상')]]
+  ];
+  for (const [date, tests] of trendRecs) {
+    await tr.evaluate(([date, tests]) => viewEdit(null, { title: date + ' 검진', date, record_type: '정기건강검진', hospital: '○○병원', tests }), [date, tests]);
+    await tr.click('#save'); await waitIdle(tr);
+  }
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  check(await tr.evaluate(() => { const b = document.querySelector('#trends'); return !!b && b.innerText.includes('지켜볼 항목 1'); }), '수치 변화: 홈에 버튼 + 지켜볼 항목 수');
+  await tr.screenshot({ path: OUT + '/trend_home.png' });
+  await tr.click('#trends'); await waitIdle(tr);
+  const trText = await bodyText(tr);
+  check(trText.includes('지켜볼 항목 1') && trText.includes('정상 범위지만 3번 연속 내리고 있어요'), '수치 변화: 정상이어도 계속 내려가는 항목을 지켜볼 항목으로');
+  check(trText.includes('안정적인 항목 2') && trText.includes('한 번만 검사한 항목 2개'), '수치 변화: 안정적인 항목 / 한 번만 검사한 항목 분리');
+  check(await tr.evaluate(() => document.querySelectorAll('.tests.trend svg.spk').length === 3), '수치 변화: 여러 번 검사한 숫자 항목마다 작은 그래프');
+  check(await tr.evaluate(() => document.querySelectorAll('[data-series^="ldl"]').length === 1), '수치 변화: 이름이 조금 달라도(하이픈·괄호) 같은 항목으로 묶음');
+  await tr.screenshot({ path: OUT + '/trend_list.png', fullPage: true });
+  await tr.click('[data-series="혈색소"]'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('단위가 다른 기록 1건은 그래프에서 뺐어요'), '수치 변화: 단위가 다른 기록은 그래프에서 제외');
+  await tr.click('#back'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('지켜볼 항목 1'), '수치 변화: 항목 그래프에서 뒤로 → 목록');
+  await tr.click('[data-series="ldl콜레스테롤"]'); await waitIdle(tr);
+  check(await tr.evaluate(() => !!document.querySelector('svg rect[fill="#E6F4EA"]') && document.body.innerText.includes('▼ 15 내렸어요')), '수치 변화: 항목 그래프에 정상 범위 띠 + 지난번 대비');
+  await tr.screenshot({ path: OUT + '/trend_item.png', fullPage: true });
+  await tr.click('[data-rec]'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('2025-10-10 검진'), '수치 변화: 날짜별 기록을 누르면 그날 기록으로');
+  await tr.click('[data-test]'); await waitIdle(tr);
+  await tr.click('#back'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('2025-10-10 검진'), '기록 상세 → 항목 그래프 → 뒤로 → 기록 상세');
+
   // 7) 시트에는 평문이 없음
   const allText = JSON.stringify(gas.sheets);
   check(!allText.includes('어머니 혈액검사') && !allText.includes('내 간기능 검사') && !allText.includes('아빠 건강검진'), '시트 어디에도 기록 제목(평문)이 없음');
