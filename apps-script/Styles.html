@@ -192,6 +192,24 @@
   .hist .q .when { display: block; font-size: 0.75em; font-weight: 500; color: var(--ink-2); }
   .hist .q .who { font-size: 0.8em; color: var(--note); margin-right: 6px; }
   .hist .a { color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+  /* 홈 수치 변화 카드 (인바디처럼): 위에 이름·최근 값, 아래 날짜별 그래프 — 오른쪽 끝이 최신, 옆으로 밀어 과거 보기 */
+  h2.sec { margin-top: 24px; }
+  .tcard { padding-bottom: 8px; }
+  .tcard .top { align-items: flex-start; flex-wrap: nowrap; }
+  .tcard .nm { font-weight: 800; font-size: 1.05em; line-height: 1.3; }
+  .tcard .val { text-align: right; white-space: nowrap; line-height: 1.2; }
+  .tcard .val .n { font-size: 1.5em; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .tcard .val small { font-size: 0.72em; color: var(--ink-2); margin-left: 3px; font-weight: 600; }
+  .tcard .chg { font-size: 0.75em; font-weight: 700; color: var(--ink-2); }
+  .tcard .go { color: #9AA1AB; font-size: 1.2em; align-self: center; }
+  .muted.small { font-size: 0.82em; margin-top: 2px; }
+  .hscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 6px; }
+  .hscroll .hchart { display: block; margin-left: auto; }
+  .tstrip { display: flex; gap: 8px; justify-content: flex-end; min-width: max-content; margin-left: auto; padding: 6px 0; }
+  .tpill { display: flex; flex-direction: column; align-items: center; min-width: 72px; padding: 6px 10px; border-radius: 12px; background: var(--bg); font-weight: 800; }
+  .tpill small { font-size: 0.72em; font-weight: 500; color: var(--ink-2); }
+  .tpill.bad { background: var(--bad-bg); color: var(--bad); }
+  .tpill.warn { background: var(--warn-bg); color: var(--warn); }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }

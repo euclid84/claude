@@ -73,7 +73,8 @@ async function addManualRecord(page, title) {
   await page.click('#manual'); await waitIdle(page);
   await page.fill('[data-bind="title"]', title);
   await page.click('#save'); await waitIdle(page);
-  await page.click('#back'); await waitIdle(page);
+  await page.click('#back'); await waitIdle(page); // 기록 상세 → 결과지 모아보기
+  await page.click('#back'); await waitIdle(page); // → 홈
 }
 
 (async () => {
@@ -149,6 +150,7 @@ async function addManualRecord(page, title) {
   // 5) 상담: 어머니 질문 → 관리자가 봄 / 관리자 질문 → 보내기 전엔 어머니에게 안 보임 → 보내기
   const momRecordId = await mom.evaluate(() => S.records[0].recordId);
   await mom.click('#back'); await waitIdle(mom); await mom.click('#back'); await waitIdle(mom);
+  await mom.click('#records'); await waitIdle(mom);
   await mom.click('.card[data-id]'); await waitIdle(mom); await mom.click('#ask'); await waitIdle(mom);
   await mom.fill('#q', '제가 물어봐요'); await mom.click('#send'); await waitIdle(mom);
   check(await mom.evaluate(() => document.body.innerText.includes('보호자 모드=false')), '어머니 본인 질문은 가족 대신 묻는 모드 아님');
@@ -166,6 +168,7 @@ async function addManualRecord(page, title) {
   await mom.reload(); await login(mom, '어머니', 'mom-pass-456');
   check(!!(await mom.$('#notes')), '어머니 홈에 "가족이 보내준 설명" 카드');
   await mom.screenshot({ path: OUT + '/member_home_notes.png' });
+  await mom.click('#records'); await waitIdle(mom);
   await mom.click('.card[data-id="' + momRecordId + '"]'); await waitIdle(mom); await mom.click('#ask'); await waitIdle(mom);
   check(await mom.evaluate(() => document.body.innerText.includes('admin님이 보내준 답변')), '어머니 상담 화면에 보내준 답변 표시');
   await mom.screenshot({ path: OUT + '/member_chat_shared.png' });
@@ -274,7 +277,7 @@ async function addManualRecord(page, title) {
   const tr = await newUserPage(browser);
   await signupAndLogin(tr, '수치', '1234');
   check(await tr.evaluate(() => !!S.token), '비밀번호: 숫자 4자리로 가입·로그인');
-  check(!(await tr.$('#trends')), '수치 변화: 기록이 없으면 버튼 없음');
+  check(!(await tr.$('.tcard')) && (await bodyText(tr)).includes('결과지를 올리면 여기에서'), '홈: 기록이 없으면 수치 변화 안내');
   check(await tr.evaluate(() => JSON.stringify([parseRange('70-99'), parseRange('70~99'), parseRange('130 미만'), parseRange('≥60'), parseRange('40 이하'), parseRange('음성')])) ===
     JSON.stringify([{ lo: 70, hi: 99 }, { lo: 70, hi: 99 }, { lo: null, hi: 130 }, { lo: 60, hi: null }, { lo: null, hi: 40 }, null]), '수치 변화: 참고치 글자 읽기');
   const T = (name, value, unit, ref, flag) => ({ name, value, unit, reference_range: ref, flag });
@@ -289,14 +292,20 @@ async function addManualRecord(page, title) {
     await tr.click('#save'); await waitIdle(tr);
   }
   await tr.evaluate(() => viewHome()); await waitIdle(tr);
-  check(await tr.evaluate(() => { const b = document.querySelector('#trends'); return !!b && b.innerText.includes('지켜볼 항목 1'); }), '수치 변화: 홈에 버튼 + 지켜볼 항목 수');
-  check(await tr.evaluate(() => [...document.querySelectorAll('.hero .actions button')].map(b => b.id).join(',')) === 'add,trends,askAll', '홈 메뉴 순서: 결과지 올리기 → 수치 변화 → 선생님께 묻기');
-  await tr.screenshot({ path: OUT + '/trend_home.png' });
-  await tr.click('#trends'); await waitIdle(tr);
+  check(await tr.evaluate(() => [...document.querySelectorAll('.hero .actions button')].map(b => b.id).join(',')) === 'add,records,askAll', '홈 메뉴: 결과지 올리기 | 결과지 보기, 선생님께 묻기');
+  check(!(await tr.$('.card[data-id]')), '홈: 결과지 카드 목록은 홈에 없음 (결과지 모아보기로)');
+  await tr.screenshot({ path: OUT + '/trend_home.png', fullPage: true });
   const trText = await bodyText(tr);
   check(trText.includes('지켜볼 항목 1') && trText.includes('정상 범위지만 3번 연속 내리고 있어요'), '수치 변화: 정상이어도 계속 내려가는 항목을 지켜볼 항목으로');
   check(trText.includes('안정적인 항목 3') && trText.includes('한 번만 검사한 항목 2개'), '수치 변화: 안정적인 항목 / 한 번만 검사한 항목 분리');
-  check(await tr.evaluate(() => document.querySelectorAll('.tests.trend svg.spk').length === 4), '수치 변화: 여러 번 검사한 숫자 항목마다 작은 그래프');
+  check(await tr.evaluate(() => document.querySelectorAll('.tcard').length === 4 && document.querySelectorAll('.tcard svg.hchart').length === 4), '홈: 여러 번 검사한 항목마다 날짜별 그래프 카드');
+  const ldlChart = await tr.evaluate(() => {
+    const c = [...document.querySelectorAll('.tcard')].find(x => x.innerText.includes('LDL'));
+    const texts = [...c.querySelectorAll('svg text')].map(t => ({ x: +t.getAttribute('x'), s: t.textContent }));
+    const dates = texts.filter(t => /^\d\d\.\d\d\.\d\d$/.test(t.s));
+    return { order: dates.sort((a, b) => a.x - b.x).map(t => t.s).join(','), values: texts.filter(t => /^\d+$/.test(t.s)).map(t => t.s).join(',') };
+  });
+  check(ldlChart.order === '24.04.10,24.10.10,25.04.10,25.10.10' && ldlChart.values === '142,151,139,124', '홈 그래프: 점마다 수치, 오른쪽 끝이 최신 → ' + ldlChart.order + ' / ' + ldlChart.values);
   check(await tr.evaluate(() => document.querySelectorAll('[data-series="AST(SGOT)"], [data-series="SGOT"]').length === 1), '정리: 병원마다 다른 이름(SGOT / AST(SGOT))을 한 항목으로 묶음');
   check(trText.includes('나쁜 콜레스테롤') && trText.includes('정상 130 미만'), '설명: 목록에 짧은 설명과 정상 기준');
   check(await tr.evaluate(() => document.querySelectorAll('[data-series^="LDL"]').length === 1), '수치 변화: 이름이 조금 달라도(하이픈·괄호) 같은 항목으로 묶음');
@@ -317,20 +326,31 @@ async function addManualRecord(page, title) {
   await tr.click('#back'); await waitIdle(tr);
   check((await bodyText(tr)).includes('2025-10-10 검진'), '기록 상세 → 항목 그래프 → 뒤로 → 기록 상세');
 
+  // 10-1) 결과지 모아보기: 결과지 카드는 따로, 누르면 상세, 뒤로 → 모아보기 → 홈
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  await tr.click('#records'); await waitIdle(tr);
+  check(await tr.evaluate(() => document.querySelectorAll('.card[data-id]').length === 4 && document.body.innerText.includes('결과지 모아보기')), '결과지 모아보기: 결과지 카드 4건');
+  await tr.click('.card[data-id]'); await waitIdle(tr);
+  await tr.click('#back'); await waitIdle(tr);
+  check(!!(await tr.$('.card[data-id]')), '결과지 모아보기: 상세에서 뒤로 → 모아보기');
+  await tr.click('#back'); await waitIdle(tr);
+  check(!!(await tr.$('.tcard')), '결과지 모아보기: 뒤로 → 홈(수치 변화)');
   // 10-2) 결과지에 참고치가 없어도 사전의 정상 기준으로 띠 표시 (단위 IU/L = U/L)
-  await tr.evaluate(() => viewTrend('AST(SGOT)', viewTrends)); await waitIdle(tr);
+  await tr.evaluate(() => viewTrend('AST(SGOT)', viewHome)); await waitIdle(tr);
   check(await tr.evaluate(() => !!document.querySelector('svg rect[fill="#E6F4EA"]') && document.body.innerText.includes('정상 40 이하')), '설명: 참고치가 없으면 사전 기준으로 정상 범위 표시');
   // 10-3) 검사일별 전체 표
   await tr.click('#back'); await waitIdle(tr);
   await tr.click('[data-mode="table"]'); await waitIdle(tr);
   const mx = await tr.evaluate(() => ({
     firstDate: document.querySelector('.mx thead th:nth-child(2)').innerText.replace(/\s/g, ''),
+    lastDate: document.querySelector('.mx thead th:last-child').innerText.replace(/\s/g, ''),
+    atRight: (w => w.scrollLeft >= w.scrollWidth - w.clientWidth - 1)(document.querySelector('.mxwrap')),
     cols: document.querySelectorAll('.mx thead th').length,
     rows: document.querySelectorAll('.mx tbody th.rowh').length,
     groups: [...document.querySelectorAll('.mx tr.grp')].map(r => r.innerText.trim()),
     ldl151: [...document.querySelectorAll('.mx td.bad')].some(td => td.innerText.startsWith('151'))
   }));
-  check(mx.firstDate === '202510.10' && mx.cols === 5, '전체 표: 검사일이 열, 최근이 왼쪽 → ' + mx.firstDate + ' / ' + mx.cols);
+  check(mx.firstDate === '202404.10' && mx.lastDate === '202510.10' && mx.cols === 5 && mx.atRight, '전체 표: 그래프처럼 오른쪽 끝이 최신, 처음에 오른쪽 끝 → ' + mx.firstDate + '~' + mx.lastDate + ' / ' + mx.atRight);
   check(mx.rows === 6, '전체 표: 검사마다 한 줄 (이름이 달라도 묶음) → ' + mx.rows);
   check(JSON.stringify(mx.groups) === JSON.stringify(['혈당', '콜레스테롤', '간', '콩팥', '혈액', '소변']), '전체 표: 분류별로 묶음 → ' + mx.groups.join(','));
   check(mx.ldl151, '전체 표: 범위 밖 칸은 색 표시');
@@ -344,7 +364,7 @@ async function addManualRecord(page, title) {
   tr.gasCalls.length = 0;
   await login(tr, '수치', '1234', true);
   check(JSON.stringify(tr.gasCalls) === JSON.stringify(['api_prelogin', 'api_login']), '로그인 속도: 비밀번호 로그인은 서버 왕복 2번 → ' + tr.gasCalls.join(','));
-  check((await bodyText(tr)).includes('기록 4건'), '로그인 속도: 한 번에 받은 데이터로 홈 표시');
+  check((await tr.innerText('#records')).includes('(4)') && !!(await tr.$('.tcard, .mx')), '로그인 속도: 한 번에 받은 데이터로 홈 표시');
   const tr2 = await tr.context().newPage();
   tr2.on('pageerror', e => { console.log('PAGE ERROR', e.message); failures++; });
   tr.gasCalls.length = 0;

@@ -6,8 +6,14 @@
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.7';
 const CHANGELOG = [
+  { v: '1.7', date: '2026-09-28', items: [
+    '🏠 첫 화면이 수치 변화 화면이 됐어요. 검사마다 최근 수치와 날짜별 그래프를 카드로 보여드려요.',
+    '그래프는 오른쪽 끝이 가장 최근이에요. 손가락으로 오른쪽으로 밀면 이전 검사가 나와요.',
+    '📋 전체 표도 그래프와 똑같이 오른쪽 끝이 최신이에요.',
+    '📄 올린 결과지는 "결과지 보기"에서 따로 모아 봐요.',
+    '자세히 보고 뒤로 가면 보던 자리로 돌아와요.'] },
   { v: '1.6', date: '2026-09-28', items: [
     '🗂 지난 상담 모아보기가 생겼어요. 홈에서 누르면 선생님께 물어본 내용을 날짜순으로 한곳에서 볼 수 있어요.',
     '전체 상담과 기록마다 물어본 상담이 모두 모이고, 누르면 이어서 물어볼 수 있어요.',
@@ -503,15 +509,6 @@ async function applyLoad(data) {
 /* ---------------- 홈 (기록 목록) ---------------- */
 
 function viewHome() {
-  const q = S.search.toLowerCase();
-  const types = RECORD_TYPES.filter(function (t) { return S.records.some(function (r) { return r.data.record_type === t; }); });
-  if (S.filter !== '전체' && types.indexOf(S.filter) === -1) S.filter = '전체';
-  const list = S.records.filter(function (r) {
-    if (S.filter !== '전체' && r.data.record_type !== S.filter) return false;
-    if (!q) return true;
-    return JSON.stringify([r.data.title, r.data.hospital, r.data.department, r.data.diagnoses, r.data.summary, r.data.memo]).toLowerCase().indexOf(q) >= 0;
-  });
-
   // 인사 카드: 호칭(의사 선생님 설정의 "저를 이렇게 불러주세요")이 있으면 그걸로 부른다
   const call = (S.doctor && S.doctor.patientCall) || nim(S.viewName);
   const latest = S.records[0];
@@ -520,14 +517,10 @@ function viewHome() {
   const heroSub = latest
     ? '최근 기록 · ' + esc(fmtDate(latest.data.date)) + ' ' + esc(latest.data.title || '') + (latestAlerts ? ' · 확인할 항목 ' + latestAlerts + '개' : '')
     : (canWrite() ? '결과지를 올리면 AI 선생님이 쉽게 설명해 드려요.' : '아직 등록된 기록이 없어요.');
-  // 메뉴 순서: 결과지 올리기 → 수치 변화 → 선생님께 묻기 (세 개면 마지막 버튼을 한 줄 전체로)
+  // 메뉴: 결과지 올리기 | 결과지 보기, 그 아래 선생님께 묻기 (세 개면 마지막 버튼을 한 줄 전체로)
   const actions = [];
   if (canWrite()) actions.push('<button id="add"><span class="ico">📷</span>결과지 올리기</button>');
-  // 같은 검사를 두 번 이상 받았으면 "수치 변화" 버튼 (지켜볼 항목 수를 함께 보여준다)
-  const trends = trendSeries();
-  const watchCount = trends.filter(function (x) { return x.alert || x.trend; }).length;
-  if (trends.length) actions.push('<button id="trends"><span class="ico">📈</span>수치 변화' +
-    (watchCount ? '<span class="badge">지켜볼 항목 ' + watchCount + '</span>' : '') + '</button>');
+  if (S.records.length) actions.push('<button id="records"><span class="ico">📄</span>결과지 보기 (' + S.records.length + ')</button>');
   if (S.records.length) actions.push('<button id="askAll"' + (actions.length === 2 ? ' class="wide"' : '') + '><span class="ico">💬</span>선생님께 묻기</button>');
 
   render(
@@ -550,32 +543,58 @@ function viewHome() {
       return '<div class="card click family-card" id="notes"><div class="row"><b class="grow">👪 가족이 보내준 설명 ' + total + '건</b>' +
         (fresh ? '<span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '<span aria-hidden="true">›</span></div></div>';
     })() : '') +
+    trendsSection() +
     (S.records.length ? '<div class="card click" id="history"><div class="row"><b class="grow">🗂 지난 상담 모아보기</b><span aria-hidden="true">›</span></div>' +
       '<p class="muted" style="margin:4px 0 0">선생님께 물어본 내용을 날짜순으로 한곳에서 봐요.</p></div>' : '') +
-    (S.records.length ? '<h2>기록 ' + S.records.length + '건</h2>' : '') +
-    (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
-      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
-    }).join('') + '</div>' : '') +
-    (S.records.length >= 6 ? '<input id="search" placeholder="🔍 병원, 진단명, 메모로 찾기" value="' + esc(S.search) + '">' : '') +
-    (list.length ? list.map(recordCard).join('') :
-      (S.records.length ? '<div class="card"><p>찾는 기록이 없어요.</p></div>' : '')) +
     '<p class="appver"><button id="ver">v' + APP_VERSION + ' · 업데이트 이력</button></p>'
   );
+  scrollChartsToLatest();
+  if (S.homeY) { window.scrollTo(0, S.homeY); S.homeY = 0; } // 자세히 보고 돌아오면 보던 자리로
+  const leave = function (fn) { return function () { S.homeY = window.scrollY; fn.apply(this, arguments); }; };
   on('#font', 'click', cycleFontSize);
   on('#ver', 'click', viewChangelog);
   on('#settings', 'click', viewSettings);
   on('#add', 'click', viewAdd);
+  on('#records', 'click', viewRecords);
   on('#askAll', 'click', function () { viewChat('ALL'); });
-  on('#trends', 'click', viewTrends);
   on('#notes', 'click', viewFamilyNotes);
   on('#history', 'click', function () { viewChatHistory().catch(showError); });
   on('.chip[data-p]', 'click', function () {
     const p = S.people[Number(this.getAttribute('data-p'))];
     if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
   });
-  on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewHome(); });
-  on('#search', 'change', function () { S.search = this.value.trim(); viewHome(); });
-  on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id')); });
+  on('[data-mode]', 'click', function () { S.trendMode = this.getAttribute('data-mode'); S.homeY = window.scrollY; viewHome(); });
+  on('[data-series]', 'click', leave(function () { viewTrend(this.getAttribute('data-series'), viewHome); }));
+  on('td[data-rec]', 'click', leave(function () { viewDetail(this.getAttribute('data-rec'), viewHome); }));
+}
+
+/** 결과지 모아보기: 올린 결과지(기록)를 날짜순 카드로. 종류별로 거르기, 6건 이상이면 찾기 */
+function viewRecords() {
+  const q = S.search.toLowerCase();
+  const types = RECORD_TYPES.filter(function (t) { return S.records.some(function (r) { return r.data.record_type === t; }); });
+  if (S.filter !== '전체' && types.indexOf(S.filter) === -1) S.filter = '전체';
+  const list = S.records.filter(function (r) {
+    if (S.filter !== '전체' && r.data.record_type !== S.filter) return false;
+    if (!q) return true;
+    return JSON.stringify([r.data.title, r.data.hospital, r.data.department, r.data.diagnoses, r.data.summary, r.data.memo]).toLowerCase().indexOf(q) >= 0;
+  });
+  render(
+    header('📄 결과지 모아보기', true) +
+    (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 결과지예요.</p>' : '') +
+    '<p class="muted">올린 결과지 ' + S.records.length + '건 · 최근 것이 위에 있어요.</p>' +
+    (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
+      return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
+    }).join('') + '</div>' : '') +
+    (S.records.length >= 6 ? '<input id="search" placeholder="🔍 병원, 진단명, 메모로 찾기" value="' + esc(S.search) + '">' : '') +
+    (list.length ? list.map(recordCard).join('') :
+      '<div class="card"><p>' + (S.records.length ? '찾는 기록이 없어요.' : '아직 올린 결과지가 없어요.') + '</p></div>') +
+    (canWrite() ? '<p><button class="primary block" id="add">📷 결과지 올리기</button></p>' : '')
+  );
+  bindBack(viewHome);
+  on('#add', 'click', viewAdd);
+  on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewRecords(); });
+  on('#search', 'change', function () { S.search = this.value.trim(); viewRecords(); });
+  on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id'), viewRecords); });
 }
 
 function recordCard(r) {
@@ -1029,9 +1048,11 @@ async function saveDraft() {
 
 /* ---------------- 기록 상세 ---------------- */
 
-function viewDetail(recordId) {
+/** onBack: 뒤로 갔을 때 보여줄 화면 (없으면 결과지 모아보기) */
+function viewDetail(recordId, onBack) {
+  const back = onBack || viewRecords;
   const r = S.records.find(function (x) { return x.recordId === recordId; });
-  if (!r) return viewHome();
+  if (!r) return back();
   const d = r.data;
   const tests = d.tests || [];
   const abnormal = tests.filter(isAbnormal);
@@ -1066,10 +1087,10 @@ function viewDetail(recordId) {
 
     (canWrite() ? '<div class="row" style="margin-top:16px"><button class="grow" id="edit">✏️ 수정</button><button class="grow danger" id="del">🗑 삭제</button></div>' : '')
   );
-  bindBack(viewHome);
+  bindBack(back);
   on('#ask', 'click', function () { viewChat(recordId); });
   on('#edit', 'click', function () { viewEdit(recordId, d); });
-  on('[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), function () { viewDetail(recordId); }); });
+  on('[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), function () { viewDetail(recordId, onBack); }); });
   on('#loadPhotos', 'click', async function () {
     try {
       loading('원본을 불러오는 중…');
@@ -1096,7 +1117,7 @@ function viewDetail(recordId) {
       loading('삭제하는 중…');
       await dcall('api_deleteRecord', S.token, recordId);
       S.records = S.records.filter(function (x) { return x.recordId !== recordId; });
-      done(); toast('삭제했습니다.'); viewHome();
+      done(); toast('삭제했습니다.'); back();
     } catch (e) { showError(e); }
   });
 }
@@ -1248,43 +1269,92 @@ function seriesDiff(s) {
 
 function trendSeries() { return collectSeries().filter(function (s) { return s.points.length >= 2; }); }
 
-function viewTrends() {
+/**
+ * 홈의 수치 변화 (인바디처럼): 검사마다 카드 한 장 — 최근 값 + 날짜별 그래프(오른쪽 끝이 최신, 왼쪽으로 밀면 과거)
+ *  - 지켜볼 항목(범위 밖이거나 계속 한쪽으로 움직이는 항목)이 먼저, 그다음 안정적인 항목
+ *  - 한 번만 검사한 항목은 접어서 목록으로 (여러 번 검사한 항목이 없으면 펼쳐서)
+ *  - [그래프 | 전체 표] 전환. 카드나 검사 이름을 누르면 자세히
+ */
+function trendsSection() {
+  if (!S.records.length) {
+    return '<div class="card"><h3>📈 수치 변화</h3><p>결과지를 올리면 여기에서 검사 수치가 어떻게 변하는지 한눈에 볼 수 있어요.</p></div>';
+  }
   const all = collectSeries();
+  if (!all.length) {
+    return '<div class="card"><h3>📈 수치 변화</h3><p>올린 결과지에 검사 수치가 아직 없어요. 건강검진·혈액검사 결과지를 올리면 여기에 모여요.</p></div>';
+  }
   const multi = all.filter(function (s) { return s.points.length >= 2; });
   const once = all.filter(function (s) { return s.points.length < 2; });
   const byRecent = function (a, b) { return b.last.date.localeCompare(a.last.date) || b.points.length - a.points.length; };
-  const watch = multi.filter(function (s) { return s.alert || s.trend; }).sort(function (a, b) {
-    return (b.alert - a.alert) || byRecent(a, b);
-  });
-  const calm = multi.filter(function (s) { return !s.alert && !s.trend; }).sort(function (a, b) {
-    return b.points.length - a.points.length || byRecent(a, b);
-  });
-  once.sort(byRecent);
-
-  const list = function (arr) { return '<div class="card"><ul class="tests trend">' + arr.map(seriesRow).join('') + '</ul></div>'; };
+  const byOrder = function (a, b) { return (a.info ? a.info.order : 999) - (b.info ? b.info.order : 999) || a.name.localeCompare(b.name); };
+  const watch = multi.filter(function (s) { return s.alert || s.trend; }).sort(function (a, b) { return (b.alert - a.alert) || byRecent(a, b); });
+  const calm = multi.filter(function (s) { return !s.alert && !s.trend; }).sort(byOrder);
+  once.sort(byOrder);
   const table = S.trendMode === 'table';
-  const listHtml = (multi.length
-      ? (watch.length ? '<h2>⚠️ 지켜볼 항목 ' + watch.length + '</h2>' + list(watch) : '') +
-        (calm.length ? '<h2>✓ 안정적인 항목 ' + calm.length + '</h2>' + list(calm) : '') +
-        '<p class="muted">그래프의 초록 띠는 정상 범위예요. 항목을 누르면 크게 볼 수 있어요.</p>'
-      : '<div class="card"><p>같은 검사를 두 번 이상 받은 기록이 쌓이면 여기서 변화를 볼 수 있어요.</p></div>') +
-    (once.length ? '<div class="card"><details><summary>한 번만 검사한 항목 ' + once.length + '개</summary>' +
-      '<ul class="tests trend">' + once.map(seriesRow).join('') + '</ul></details></div>' : '');
-  render(
-    header('📈 수치 변화', true) +
-    (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 수치예요.</p>' : '') +
-    (all.length ? '<div class="modes" role="tablist"><button role="tab" data-mode="list" class="' + (table ? '' : 'on') + '" aria-selected="' + !table + '">목록</button>' +
-      '<button role="tab" data-mode="table" class="' + (table ? 'on' : '') + '" aria-selected="' + table + '">검사일별 전체 표</button></div>' : '') +
-    (table ? trendTable(all) : listHtml)
-  );
-  bindBack(viewHome);
-  on('[data-mode]', 'click', function () { S.trendMode = this.getAttribute('data-mode'); viewTrends(); });
-  on('[data-series]', 'click', function () { viewTrend(this.getAttribute('data-series'), viewTrends); });
-  on('td[data-rec]', 'click', function () { viewDetail(this.getAttribute('data-rec')); });
+  const graphs = (watch.length ? '<h2>⚠️ 지켜볼 항목 ' + watch.length + '</h2>' + watch.map(trendCard).join('') : '') +
+    (calm.length ? '<h2>✓ 안정적인 항목 ' + calm.length + '</h2>' + calm.map(trendCard).join('') : '') +
+    (once.length ? '<div class="card"><details' + (multi.length ? '' : ' open') + '><summary>한 번만 검사한 항목 ' + once.length + '개</summary>' +
+      '<ul class="tests trend">' + once.map(seriesRow).join('') + '</ul></details></div>' : '') +
+    (multi.length ? '' : '<p class="muted">같은 검사를 두 번 이상 받으면 날짜별 그래프가 생겨요.</p>');
+  return '<h2 class="sec">📈 수치 변화</h2>' +
+    '<div class="modes" role="tablist"><button role="tab" data-mode="list" class="' + (table ? '' : 'on') + '" aria-selected="' + !table + '">📈 그래프</button>' +
+    '<button role="tab" data-mode="table" class="' + (table ? 'on' : '') + '" aria-selected="' + table + '">📋 전체 표</button></div>' +
+    (table ? trendTable(all)
+      : '<p class="muted">오른쪽 끝이 가장 최근이고, 왼쪽에 이전 검사가 있어요 (손가락으로 그래프를 오른쪽으로 밀기). 초록 띠는 정상 범위, 카드를 누르면 자세히 볼 수 있어요.</p>' + graphs);
+}
+
+function trendCard(s) {
+  const last = s.last, d = seriesDiff(s);
+  const normal = normalLabel(last.t, s.info);
+  return '<div class="card click tcard" data-series="' + esc(last.t.name) + '">' +
+    '<div class="row top"><div class="grow"><div class="nm">' + esc(s.name) + '</div>' + (s.info ? '<span class="sh">' + esc(s.info.short) + '</span>' : '') + '</div>' +
+    '<div class="val"><span class="n">' + esc(last.t.value) + '</span><small>' + esc(last.t.unit) + '</small>' +
+    '<div>' + (s.alert ? flagHtml(last.t.flag) : d && d.diff ? '<span class="chg">지난번보다 ' + (d.diff > 0 ? '▲ ' : '▼ ') + Math.abs(d.diff) + '</span>' : '') + '</div></div>' +
+    '<span class="go" aria-hidden="true">›</span></div>' +
+    (normal ? '<div class="muted small">' + esc(normal) + '</div>' : '') +
+    (s.trend ? '<div class="why">' + esc(s.trend) + '</div>' : '') +
+    '<div class="hscroll">' + (s.num.length ? historyChart(s) : textStrip(s)) + '</div></div>';
+}
+
+/** 날짜별 그래프 (인바디처럼): 점마다 수치, 아래에 날짜. 점 사이 간격은 고정이라 많아지면 옆으로 밀어서 본다 */
+function historyChart(s) {
+  const pts = s.num, n = pts.length, STEP = 70, L = 34, R = 34, H = 150, T = 32, B = 34;
+  const W = Math.max(L + R + (n - 1) * STEP, 280);
+  const x = function (i) { return W - R - (n - 1 - i) * STEP; };
+  const dom = chartDomain(s);
+  const y = function (v) { return T + (H - T - B) * (1 - (v - dom.min) / (dom.max - dom.min)); };
+  let svg = '<svg class="hchart" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' +
+    esc(s.name) + ' 날짜별 수치: ' + esc(pts.map(function (p) { return fmtDate(p.date) + ' ' + p.t.value; }).join(', ')) + '">' +
+    bandRect(s, y, 0, W, T - 10, H - B) +
+    '<line x1="0" x2="' + W + '" y1="' + (H - B) + '" y2="' + (H - B) + '" stroke="#E4DED3"/>';
+  if (n > 1) svg += '<polyline fill="none" stroke="#0E6B64" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="' +
+    pts.map(function (p, i) { return x(i) + ',' + y(p.n).toFixed(1); }).join(' ') + '"/>';
+  pts.forEach(function (p, i) {
+    const isLast = i === n - 1, bad = isAbnormal(p.t);
+    svg += '<circle cx="' + x(i) + '" cy="' + y(p.n).toFixed(1) + '" r="' + (isLast ? 6.5 : 5) + '" fill="' + dotColor(p.t) + '" stroke="#fff" stroke-width="2"/>' +
+      '<text x="' + x(i) + '" y="' + (y(p.n) - 12).toFixed(1) + '" text-anchor="middle" font-size="' + (isLast ? 16 : 14) + '" font-weight="' + (isLast ? 800 : 700) +
+      '" fill="' + (bad ? '#A61B1B' : '#1B1F24') + '">' + esc(p.t.value) + '</text>' +
+      '<text x="' + x(i) + '" y="' + (H - 12) + '" text-anchor="middle" font-size="12.5" font-weight="' + (isLast ? 800 : 500) + '" fill="#454C58">' +
+      esc(p.date.slice(2).replace(/-/g, '.')) + '</text>';
+  });
+  return svg + '</svg>';
+}
+
+/** 글자 결과(음성·양성 등): 날짜별 칸을 옆으로 나열 (오른쪽 끝이 최신) */
+function textStrip(s) {
+  return '<div class="tstrip">' + s.points.map(function (p) {
+    const cls = !isAbnormal(p.t) ? '' : p.t.flag === '경계' ? ' warn' : ' bad';
+    return '<span class="tpill' + cls + '"><small>' + esc(p.date.slice(2).replace(/-/g, '.')) + '</small>' + esc(p.t.value) + '</span>';
+  }).join('') + '</div>';
+}
+
+/** 옆으로 미는 그래프·표를 오른쪽 끝(가장 최근)에서 시작하게 */
+function scrollChartsToLatest() {
+  $all('.hscroll').forEach(function (el) { el.scrollLeft = el.scrollWidth; });
 }
 
 /**
- * 검사일별 전체 표: 행 = 검사(분류별로 묶음), 열 = 검사한 날 (최근이 왼쪽 — 옆으로 밀지 않아도 최신 값이 보이게)
+ * 검사일별 전체 표: 행 = 검사(분류별로 묶음), 열 = 검사한 날 (그래프와 같게 오른쪽 끝이 최신, 처음에 오른쪽 끝을 보여준다)
  *  - 병원마다 이름이 달라도 사전 기준으로 한 줄에 모은다
  *  - 범위 밖 칸은 색 + ▲▼(지난 검사 대비) 로 표시, 칸을 누르면 그날 기록으로
  */
@@ -1292,12 +1362,12 @@ function trendTable(all) {
   if (!all.length) return '';
   const dates = [];
   all.forEach(function (s) { s.points.forEach(function (p) { if (dates.indexOf(p.date) < 0) dates.push(p.date); }); });
-  dates.sort().reverse();
+  dates.sort();
   const groups = {};
   all.forEach(function (s) { const c = s.info ? s.info.cat : '기타'; (groups[c] = groups[c] || []).push(s); });
   const cats = TEST_CATS.filter(function (c) { return groups[c]; });
-  let html = '<p class="muted">왼쪽이 가장 최근 검사예요. 옆으로 밀면 이전 검사가 나와요. 검사 이름을 누르면 설명과 그래프를, 숫자를 누르면 그날 결과지를 볼 수 있어요.</p>' +
-    '<div class="mxwrap"><table class="mx"><thead><tr><th class="rowh" scope="col">검사</th>' +
+  let html = '<p class="muted">오른쪽 끝이 가장 최근 검사이고, 왼쪽에 이전 검사가 있어요 (손가락으로 표를 오른쪽으로 밀기). 검사 이름을 누르면 설명과 그래프를, 숫자를 누르면 그날 결과지를 볼 수 있어요.</p>' +
+    '<div class="mxwrap hscroll"><table class="mx"><thead><tr><th class="rowh" scope="col">검사</th>' +
     dates.map(function (d) { return '<th scope="col"><small>' + esc(d.slice(0, 4)) + '</small>' + esc(d.slice(5).replace('-', '.')) + '</th>'; }).join('') +
     '</tr></thead><tbody>';
   cats.forEach(function (c) {
@@ -1354,7 +1424,6 @@ function seriesRow(s) {
   const sub = [normalLabel(s.last.t, s.info), s.points.length > 1 ? s.points.length + '회' : fmtDate(s.last.date)].filter(Boolean).join(' · ');
   return '<li data-series="' + esc(s.last.t.name) + '"><div class="nm">' + esc(s.name) + (s.info ? '<span class="sh">' + esc(s.info.short) + '</span>' : '') +
     '<small>' + esc(sub) + '</small></div>' +
-    (s.num.length >= 2 ? miniSpark(s) : '') +
     '<div class="val">' + esc(s.last.t.value) + '<small>' + esc(s.last.t.unit) + '</small>' +
     (s.alert ? '<div>' + flagHtml(s.last.t.flag) + '</div>'
       : d && d.diff ? '<div class="chg">' + (d.diff > 0 ? '▲ ' : '▼ ') + Math.abs(d.diff) + '</div>' : '') + '</div>' +
@@ -1382,21 +1451,6 @@ function bandRect(s, y, x0, x1, top, bottom) {
 }
 
 function dotColor(t) { return !isAbnormal(t) ? '#0E6B64' : (t.flag === '경계' ? '#B26A00' : '#C0392B'); }
-
-/** 목록용 작은 그래프 */
-function miniSpark(s) {
-  const W = 84, H = 34, P = 4, n = s.num.length, dom = chartDomain(s);
-  const x = function (i) { return P + (W - 2 * P) * i / (n - 1); };
-  const y = function (v) { return P + (H - 2 * P) * (1 - (v - dom.min) / (dom.max - dom.min)); };
-  let svg = '<svg class="spk" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" aria-hidden="true">' +
-    bandRect(s, y, 0, W, 0, H) +
-    '<polyline fill="none" stroke="#0E6B64" stroke-width="2" stroke-linejoin="round" points="' +
-    s.num.map(function (p, i) { return x(i).toFixed(1) + ',' + y(p.n).toFixed(1); }).join(' ') + '"/>';
-  s.num.forEach(function (p, i) {
-    if (i === n - 1 || isAbnormal(p.t)) svg += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.n).toFixed(1) + '" r="' + (i === n - 1 ? 3.6 : 2.6) + '" fill="' + dotColor(p.t) + '"/>';
-  });
-  return svg + '</svg>';
-}
 
 function viewTrend(testName, onBack) {
   const key = testKey(testName);
@@ -1427,7 +1481,7 @@ function viewTrend(testName, onBack) {
     (s.points.length < 2 ? '<p class="muted">같은 항목의 기록이 더 쌓이면 변화를 비교할 수 있어요.</p>' : '') + '</div>'
   );
   bindBack(onBack);
-  on('[data-rec]', 'click', function () { viewDetail(this.getAttribute('data-rec')); });
+  on('[data-rec]', 'click', function () { viewDetail(this.getAttribute('data-rec'), function () { viewTrend(testName, onBack); }); });
   on('[data-pt]', 'click', function () {
     const p = s.num[Number(this.getAttribute('data-pt'))];
     toast(fmtDate(p.date) + ' · ' + p.t.value + ' ' + (p.t.unit || '') + ' (' + (p.t.flag || '판정없음') + ')');
