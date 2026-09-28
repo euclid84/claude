@@ -358,6 +358,24 @@ async function addManualRecord(page, title) {
   check(!!(await tr3.$('#login')) && !(await tr3.$('#resume')), '자동 로그인: 로그아웃하면 저장한 로그인 정보도 지움');
   await tr2.close(); await tr3.close();
 
+  // 10-5) 지난 상담 모아보기: 전체 상담 + 기록 상담을 한곳에, 누르면 그 대화로, 뒤로 가면 모아보기
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  await tr.click('#askAll'); await waitIdle(tr);
+  await tr.fill('#q', '전체 질문입니다'); await tr.click('#send'); await waitIdle(tr);
+  await tr.evaluate(() => viewDetail(S.records[0].recordId)); await waitIdle(tr);
+  await tr.click('#ask'); await waitIdle(tr);
+  await tr.fill('#q', '기록 질문입니다'); await tr.click('#send'); await waitIdle(tr);
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  await tr.click('#history'); await waitIdle(tr);
+  const hist = await tr.evaluate(() => [...document.querySelectorAll('.hist h3')].map(h => h.innerText));
+  check(hist.length === 2 && hist[0].includes('2025-10-10 검진') && hist[1].includes('전체 기록 상담'), '지난 상담: 전체·기록 상담을 최근 순으로 모아 보기 → ' + hist.join(' | '));
+  check((await bodyText(tr)).includes('전체 질문입니다') && (await bodyText(tr)).includes('기록 질문입니다') && (await bodyText(tr)).includes('가짜 AI 답변'), '지난 상담: 질문과 답 미리보기');
+  await tr.screenshot({ path: OUT + '/chat_history.png', fullPage: true });
+  await tr.click('[data-thread]'); await waitIdle(tr);
+  check(await tr.evaluate(() => !!document.querySelector('#q') && document.body.innerText.includes('기록 질문입니다')), '지난 상담: 누르면 그 대화로 (이어서 질문 가능)');
+  await tr.click('#back'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('지난 상담') && !!(await tr.$('.hist')), '지난 상담: 대화에서 뒤로 → 모아보기');
+
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);
   check(ver === gas.ctx.api_version(), '버전: 화면 코드와 서버 코드 버전이 같음 (v' + ver + ')');

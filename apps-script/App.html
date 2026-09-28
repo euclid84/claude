@@ -6,8 +6,12 @@
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.6';
 const CHANGELOG = [
+  { v: '1.6', date: '2026-09-28', items: [
+    '🗂 지난 상담 모아보기가 생겼어요. 홈에서 누르면 선생님께 물어본 내용을 날짜순으로 한곳에서 볼 수 있어요.',
+    '전체 상담과 기록마다 물어본 상담이 모두 모이고, 누르면 이어서 물어볼 수 있어요.',
+    '상담은 아이디에 저장돼서 어느 휴대폰에서 로그인해도 똑같이 보여요.'] },
   { v: '1.5', date: '2026-09-28', items: [
     '⚡ 로그인이 훨씬 빨라졌어요.',
     '이 휴대폰에서 한 번 로그인하면 다음부터는 비밀번호 없이 바로 열려요. 로그아웃하면 다시 비밀번호를 물어봐요.',
@@ -546,6 +550,8 @@ function viewHome() {
       return '<div class="card click family-card" id="notes"><div class="row"><b class="grow">👪 가족이 보내준 설명 ' + total + '건</b>' +
         (fresh ? '<span class="flag 높음">새 소식 ' + fresh + '</span>' : '') + '<span aria-hidden="true">›</span></div></div>';
     })() : '') +
+    (S.records.length ? '<div class="card click" id="history"><div class="row"><b class="grow">🗂 지난 상담 모아보기</b><span aria-hidden="true">›</span></div>' +
+      '<p class="muted" style="margin:4px 0 0">선생님께 물어본 내용을 날짜순으로 한곳에서 봐요.</p></div>' : '') +
     (S.records.length ? '<h2>기록 ' + S.records.length + '건</h2>' : '') +
     (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
       return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
@@ -562,6 +568,7 @@ function viewHome() {
   on('#askAll', 'click', function () { viewChat('ALL'); });
   on('#trends', 'click', viewTrends);
   on('#notes', 'click', viewFamilyNotes);
+  on('#history', 'click', function () { viewChatHistory().catch(showError); });
   on('.chip[data-p]', 'click', function () {
     const p = S.people[Number(this.getAttribute('data-p'))];
     if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
@@ -1497,7 +1504,8 @@ async function decryptChats(rows) {
   return out;
 }
 
-async function viewChat(recordId, startTab) {
+/** onBack: 뒤로 갔을 때 보여줄 화면 (없으면 전체 상담은 홈, 기록 상담은 그 기록) */
+async function viewChat(recordId, startTab, onBack) {
   const isAll = recordId === 'ALL';
   const rec = isAll ? null : S.records.find(function (r) { return r.recordId === recordId; });
   const guardian = viewingOther();
@@ -1557,7 +1565,7 @@ async function viewChat(recordId, startTab) {
       (canAsk ? '<div class="composer"><div class="inner"><textarea id="q" placeholder="궁금한 점을 적어주세요"></textarea>' +
         '<button class="primary" id="send">보내기</button></div></div>' : '')
     );
-    bindBack(function () { if (isAll) viewHome(); else viewDetail(recordId); });
+    bindBack(onBack || function () { if (isAll) viewHome(); else viewDetail(recordId); });
     on('#send', 'click', function () { send(val('#q')); });
     on('.chip[data-q]', 'click', function () { send(this.getAttribute('data-q')); });
     on('.chip[data-tab]', 'click', function () { tab = this.getAttribute('data-tab'); draw(); });
@@ -1650,6 +1658,67 @@ function viewFamilyNotes() {
   on('.card[data-rec]', 'click', function () {
     const id = this.getAttribute('data-rec');
     if (id === 'ALL' || S.records.some(function (r) { return r.recordId === id; })) viewChat(id);
+  });
+}
+
+/* ---------------- 지난 상담 모아보기 ---------------- */
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0') +
+    ' ' + (d.getHours() < 12 ? '오전 ' : '오후 ') + ((d.getHours() + 11) % 12 + 1) + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+/**
+ * 전체 기록 상담 + 기록마다의 상담을 한곳에: 대화(어디서 물었는지)별로 묶고 최근 대화가 위로.
+ * 상담은 아이디(계정)에 저장되므로 어느 기기에서 로그인해도 같다.
+ */
+async function viewChatHistory() {
+  loading('지난 상담을 불러오는 중…');
+  const all = await loadChats('*');
+  done();
+  const threads = {};
+  all.forEach(function (m) { (threads[m.recordId] = threads[m.recordId] || []).push(m); });
+  const list = Object.keys(threads).map(function (id) {
+    const msgs = threads[id];
+    return { id: id, msgs: msgs, last: msgs[msgs.length - 1].createdAt };
+  }).sort(function (a, b) { return b.last.localeCompare(a.last); });
+  const titleOf = function (id) {
+    if (id === 'ALL') return '💬 전체 기록 상담';
+    const r = S.records.find(function (x) { return x.recordId === id; });
+    return r ? '📄 ' + (r.data.title || '기록') + ' · ' + fmtDate(r.data.date) : '삭제된 기록';
+  };
+  const qCount = all.filter(function (m) { return m.role === 'user'; }).length;
+  render(
+    header('🗂 지난 상담', true) +
+    (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 상담이에요.</p>' : '') +
+    (list.length
+      ? '<p class="muted">질문 ' + qCount + '개 · 최근 대화가 위에 있어요. 누르면 이어서 물어볼 수 있어요.</p>' +
+        list.map(function (t) {
+          const pairs = [];
+          t.msgs.forEach(function (m, i) {
+            if (m.role !== 'user') return;
+            const a = t.msgs[i + 1] && t.msgs[i + 1].role === 'model' ? t.msgs[i + 1] : null;
+            pairs.push({ q: m, a: a });
+          });
+          return '<div class="card click hist" data-thread="' + esc(t.id) + '"><div class="row"><h3 class="grow" style="margin:0">' + esc(titleOf(t.id)) + '</h3>' +
+            '<span aria-hidden="true">›</span></div>' +
+            '<p class="muted" style="margin:2px 0 8px">질문 ' + pairs.length + '개 · 마지막 ' + esc(fmtWhen(t.last)) + '</p>' +
+            pairs.slice().reverse().map(function (p) {
+              return '<div class="qa"><div class="q"><span class="when">' + esc(fmtWhen(p.q.createdAt)) + '</span>' +
+                (p.q.fromOwner ? '' : '<span class="who">👪 ' + esc(nim(p.q.authorName)) + '</span>') + esc(p.q.text) + '</div>' +
+                (p.a ? '<div class="a">' + esc(p.a.text) + '</div>' : '') + '</div>';
+            }).join('') + '</div>';
+        }).join('')
+      : '<div class="card"><p>아직 선생님께 물어본 내용이 없어요.</p><p class="muted">홈의 💬 선생님께 묻기나, 기록 안의 "질문하기"로 물어보면 여기에 모여요.</p></div>')
+  );
+  bindBack(viewHome);
+  on('[data-thread]', 'click', function () {
+    const id = this.getAttribute('data-thread');
+    const back = function () { viewChatHistory().catch(showError); };
+    if (id === 'ALL' || S.records.some(function (r) { return r.recordId === id; })) viewChat(id, null, back);
+    else toast('삭제된 기록의 상담이라 이어서 물어볼 수 없어요.');
   });
 }
 

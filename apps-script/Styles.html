@@ -186,6 +186,12 @@
   .mx td.none { color: #B8BEC6; font-weight: 400; text-align: center; cursor: default; }
   .mx td .ar { font-size: 0.75em; margin-left: 3px; }
   .mx td small { display: block; font-size: 0.72em; font-weight: 500; }
+  /* 지난 상담 모아보기: 질문은 굵게, 답은 3줄까지만 (누르면 전체 대화) */
+  .hist .qa { border-top: 1px solid var(--line); padding: 10px 0; }
+  .hist .q { font-weight: 800; }
+  .hist .q .when { display: block; font-size: 0.75em; font-weight: 500; color: var(--ink-2); }
+  .hist .q .who { font-size: 0.8em; color: var(--note); margin-right: 6px; }
+  .hist .a { color: var(--ink-2); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
