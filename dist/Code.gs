@@ -12,6 +12,11 @@
  */
 
 const APP_NAME = '우리가족 진료기록';
+// 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
+const APP_VERSION = '1.3';
+
+/** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
+function api_version() { return APP_VERSION; }
 
 const SHEETS = {
   CONFIG: 'Config',

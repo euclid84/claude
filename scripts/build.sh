@@ -4,6 +4,12 @@
 #   dist/Index.html : Styles/Crypto/App 을 끼워 넣은 화면 파일
 set -e
 cd "$(dirname "$0")/.."
+# 화면(App.html)과 서버(Code.gs)의 버전이 같아야 한다
+v_app=$(sed -n "s/^const APP_VERSION = '\(.*\)';/\1/p" apps-script/App.html)
+v_gs=$(sed -n "s/^const APP_VERSION = '\(.*\)';/\1/p" apps-script/Code.gs)
+if [ -z "$v_app" ] || [ "$v_app" != "$v_gs" ]; then
+  echo "버전이 다릅니다: App.html=$v_app Code.gs=$v_gs" >&2; exit 1
+fi
 mkdir -p dist
 {
   echo "// 자동 생성 파일 — 원본은 apps-script/*.gs (scripts/build.sh 로 생성)"

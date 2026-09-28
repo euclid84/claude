@@ -153,6 +153,11 @@
   .tests .val { text-align: right; font-weight: 800; font-size: 1.1em; white-space: nowrap; }
   .tests .val small { font-weight: 600; font-size: 0.72em; color: var(--ink-2); margin-left: 2px; }
   .tests .go { color: #9AA1AB; font-size: 1.1em; }
+  /* 앱 버전 (홈·로그인 맨 아래) */
+  .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
+  .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .appver #heart { text-decoration: none; font-size: 1.3em; color: var(--bad); }
+  .secret { text-align: center; font-size: 1.3em; font-weight: 800; line-height: 1.6; color: var(--primary-dark); background: var(--primary-soft); border-radius: var(--radius); padding: 28px 16px; margin-bottom: 24px; }
   /* 수치 변화 목록: 이름 · 작은 그래프 · 최근 값, 필요하면 아래에 알림 한 줄 */
   .tests.trend li { flex-wrap: wrap; row-gap: 6px; }
   .tests .spk { flex: none; }
@@ -445,6 +450,30 @@ const Crypt = (function () {
  *  - 새로고침하거나 창을 닫으면 다시 로그인해야 한다.
  * ========================================================================= */
 
+// 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
+const APP_VERSION = '1.3';
+const CHANGELOG = [
+  { v: '1.3', date: '2026-09-28', items: [
+    '📈 수치 변화 메뉴가 생겼어요. 같은 검사를 여러 번 받았으면 수치가 어떻게 변했는지 그래프로 볼 수 있어요.',
+    '지켜볼 수치(정상 범위 밖이거나, 정상이어도 계속 오르거나 내리는 수치)를 맨 위에 모아 보여드려요.',
+    '그래프에 정상 범위를 초록 띠로 표시해요.',
+    '홈 메뉴 순서를 결과지 올리기 → 수치 변화 → 선생님께 묻기로 바꿨어요.',
+    '홈 맨 아래에서 앱 버전과 업데이트 이력을 볼 수 있어요.'] },
+  { v: '1.2', date: '2026-09-24', items: [
+    '👑 관리자가 가족 모두의 기록을 함께 챙겨볼 수 있어요.',
+    '앱을 쓰지 않는 가족은 관리자가 대신 기록을 올리고 관리할 수 있어요.',
+    '관리자 콘솔에서 가족 구성원, 조회 권한, 가입 설정을 관리해요.',
+    '부르는 호칭을 자연스럽게 다듬었어요.'] },
+  { v: '1.1', date: '2026-09-24', items: [
+    '👪 가족에게 내 기록을 보여줄 수 있어요. 암호화는 그대로 유지돼요.',
+    '선생님과 상담한 내용을 골라서 가족에게 보내드릴 수 있어요.',
+    '어르신이 보기 편하게 글씨를 키우고 화면을 새로 꾸몄어요.'] },
+  { v: '1.0', date: '2026-09-23', items: [
+    '🩺 처음 선보였어요. 결과지 사진·문자·PDF를 올리면 AI가 날짜·병원·검사 수치를 정리해 드려요.',
+    '병원 문자 캡처 여러 장을 한 번에 올리면 날짜별 기록으로 나눠 드려요.',
+    '기록은 본인 비밀번호로 암호화해서 저장해요.',
+    'AI 의사 선생님께 결과에 대해 물어볼 수 있어요.'] }
+];
 const RECORD_TYPES = ['정기건강검진', '외래진료', '입원·수술', '검사결과', '처방·약', '문자·알림', '기타'];
 const TEST_FLAGS = ['정상', '높음', '낮음', '경계', '이상', '판정없음'];
 const MIN_PW = 8;
@@ -621,7 +650,8 @@ function viewLogin(message) {
     '</div>' +
     '<div class="stack"><button id="toSignup">처음이에요 (계정 만들기)</button>' +
     '<button id="toRecover">비밀번호를 잊었어요</button></div>' +
-    '<p class="muted" style="margin-top:16px">내 기록은 내 비밀번호로만 열 수 있게 암호화되어 저장됩니다. 가족이나 관리자도 내용을 볼 수 없습니다.</p>'
+    '<p class="muted" style="margin-top:16px">내 기록은 내 비밀번호로만 열 수 있게 암호화되어 저장됩니다. 가족이나 관리자도 내용을 볼 수 없습니다.</p>' +
+    '<p class="appver">v' + APP_VERSION + '</p>'
   );
   on('#login', 'click', doLogin);
   on('#p', 'keydown', function (e) { if (e.key === 'Enter') doLogin(); });
@@ -904,9 +934,11 @@ function viewHome() {
     }).join('') + '</div>' : '') +
     (S.records.length >= 6 ? '<input id="search" placeholder="🔍 병원, 진단명, 메모로 찾기" value="' + esc(S.search) + '">' : '') +
     (list.length ? list.map(recordCard).join('') :
-      (S.records.length ? '<div class="card"><p>찾는 기록이 없어요.</p></div>' : ''))
+      (S.records.length ? '<div class="card"><p>찾는 기록이 없어요.</p></div>' : '')) +
+    '<p class="appver"><button id="ver">v' + APP_VERSION + ' · 업데이트 이력</button></p>'
   );
   on('#font', 'click', cycleFontSize);
+  on('#ver', 'click', viewChangelog);
   on('#settings', 'click', viewSettings);
   on('#add', 'click', viewAdd);
   on('#askAll', 'click', function () { viewChat('ALL'); });
@@ -1451,6 +1483,37 @@ function testTable(tests) {
       '<div class="val">' + esc(t.value) + '<small>' + esc(t.unit) + '</small><div>' + flagHtml(t.flag) + '</div></div>' +
       '<span class="go" aria-hidden="true">›</span></li>';
   }).join('') + '</ul>';
+}
+
+/* ---------------- 업데이트 이력 ---------------- */
+
+function viewChangelog() {
+  render(
+    header('업데이트 이력', true) +
+    '<div id="verWarn"></div>' +
+    CHANGELOG.map(function (c, i) {
+      return '<div class="card"><div class="row"><b class="grow" style="font-size:1.15em">v' + esc(c.v) +
+        (i === 0 ? ' <span class="tag">지금 버전</span>' : '') + '</b><span class="muted">' + esc(fmtDate(c.date)) + '</span></div>' +
+        '<ul>' + c.items.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    }).join('') +
+    // 숨은 인사: 맨 아래 작은 하트를 누르면 나온다
+    '<p class="appver"><button id="heart" aria-label="숨은 인사 보기">♡</button></p>' +
+    '<div id="secret" class="secret" style="display:none">어머님, 아버님<br>항상 건강하세요 ♥</div>'
+  );
+  bindBack(viewHome);
+  on('#heart', 'click', function () {
+    $('#secret').style.display = '';
+    this.textContent = '♥';
+    $('#secret').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  // 관리자에게만: 화면 코드(Index)와 서버 코드(Code.gs)를 서로 다른 버전으로 붙여넣었는지 알려준다
+  if (S.me && S.me.isAdmin) {
+    const warn = function (sv) {
+      $('#verWarn').innerHTML = '<p class="notice">서버 코드(Code.gs)가 ' + (sv ? 'v' + esc(sv) : '예전 버전') + '이에요. 화면 코드(v' + APP_VERSION +
+        ')와 맞추려면 Code.gs도 새로 붙여넣고 새 버전으로 배포해 주세요.</p>';
+    };
+    call('api_version').then(function (sv) { if (sv !== APP_VERSION) warn(sv); }).catch(function () { warn(''); });
+  }
 }
 
 /* ---------------- 수치 변화 (검사 항목 추이) ---------------- */

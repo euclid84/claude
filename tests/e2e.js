@@ -306,6 +306,22 @@ async function addManualRecord(page, title) {
   await tr.click('#back'); await waitIdle(tr);
   check((await bodyText(tr)).includes('2025-10-10 검진'), '기록 상세 → 항목 그래프 → 뒤로 → 기록 상세');
 
+  // 11) 버전 표시·업데이트 이력·숨은 인사
+  const ver = await tr.evaluate(() => APP_VERSION);
+  check(ver === gas.ctx.api_version(), '버전: 화면 코드와 서버 코드 버전이 같음 (v' + ver + ')');
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  check((await tr.innerText('#ver')).includes('v' + ver), '버전: 홈 맨 아래에 버전 표시');
+  await tr.click('#ver'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('업데이트 이력') && (await bodyText(tr)).includes('지금 버전'), '버전: 누르면 업데이트 이력');
+  check(!(await tr.isVisible('#secret')), '숨은 인사: 처음에는 안 보임');
+  await tr.click('#heart');
+  check((await tr.innerText('#secret')).includes('어머님, 아버님') && (await tr.innerText('#secret')).includes('항상 건강하세요'), '숨은 인사: 하트를 누르면 "어머님, 아버님 항상 건강하세요"');
+  await tr.screenshot({ path: OUT + '/changelog.png', fullPage: true });
+  await me.evaluate(() => viewChangelog()); await me.waitForTimeout(300);
+  check(!(await me.$('#verWarn .notice')), '버전: 관리자 화면에서 서버 버전이 같으면 경고 없음');
+  await stranger.goto('https://app.local/'); await waitIdle(stranger);
+  check((await bodyText(stranger)).includes('v' + ver), '버전: 로그인 화면에도 버전 표시');
+
   // 7) 시트에는 평문이 없음
   const allText = JSON.stringify(gas.sheets);
   check(!allText.includes('어머니 혈액검사') && !allText.includes('내 간기능 검사') && !allText.includes('아빠 건강검진'), '시트 어디에도 기록 제목(평문)이 없음');
