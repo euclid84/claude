@@ -648,6 +648,10 @@ const TEST_INFO = [
     short: '간암 표지자', desc: 'AFP와 함께 간암을 살펴보는 검사예요.',
     normal: '보통 40 미만 (병원마다 달라요)',
     high: '올랐다고 바로 간암은 아니에요. 다른 검사와 함께 판단해요.' },
+  { cat: '기타', names: ['혈액형(ABO)', '혈액형', 'ABO', 'ABO 혈액형', 'Blood type', 'ABO형'],
+    short: '혈액형', desc: '수혈이나 수술 때 꼭 필요한 기본 정보예요. 정상·비정상이 있는 검사는 아니에요.' },
+  { cat: '기타', names: ['Rh 혈액형', 'Rh', 'Rh(D)', 'Rh 인자', 'Rh(D) 혈액형', 'RhD'],
+    short: 'Rh 혈액형', desc: '우리나라 사람은 대부분 Rh+예요. Rh-라면 수혈이나 출산 때 병원에 꼭 알려야 해요.' },
   { cat: '기타', names: ['PSA', '전립선특이항원'], unit: 'ng/mL', units: ['ng/ml'],
     short: '전립선 검사', desc: '전립선에 문제가 있으면 올라가는 단백질이에요.',
     normal: '4 이하', range: { lo: null, hi: 4 } },
@@ -707,8 +711,11 @@ const TEST_INFO = [
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 const CHANGELOG = [
+  { v: '1.9', date: '2026-09-29', items: [
+    '📱 갤럭시 등 안드로이드 휴대폰에서 뒤로 버튼을 두 번째 눌렀을 때 앱이 닫히던 문제를 고쳤어요.',
+    '🩸 건강 정보에 혈액형(ABO·Rh)을 넣을 수 있어요. 직접 적지 않아도 건강검진 결과지에 있으면 찾아서 보여드려요.'] },
   { v: '1.8', date: '2026-09-29', items: [
     '📱 화면 아래에 메뉴가 항상 떠 있어요: 홈 · 결과지 · 올리기 · 상담 · 내 정보.',
     '휴대폰의 뒤로 버튼을 눌러도 앱 밖으로 나가지 않고 앱 안에서 한 단계씩 돌아가요. 홈에서 한 번 더 누르면 앱을 나가요.',
@@ -764,7 +771,7 @@ const MIN_PW = 4; // 숫자 4자리도 가능 (가족이 쓰기 쉽게). 짧을�
 const DEFAULT_DOCTOR = {
   presetId: '', doctorName: '', specialty: '가정의학과',
   tone: 'friendly', level: 'easy', length: 'medium', lifestyleTips: true,
-  patientCall: '', ageGroup: '', sex: '', conditions: '', surgeries: '', medications: '', allergies: '', concerns: '',
+  patientCall: '', ageGroup: '', sex: '', bloodType: '', conditions: '', surgeries: '', medications: '', allergies: '', concerns: '',
   customPrompt: ''
 };
 
@@ -944,21 +951,40 @@ $app.addEventListener('click', function (e) {
 });
 
 /* ---------------- 휴대폰 '뒤로' 버튼 ----------------
- * 웹앱이라 휴대폰 뒤로 버튼을 누르면 앱 밖으로 나가 버린다. 그래서 브라우저 기록에 한 칸을 끼워 두고(덫),
- * 뒤로 버튼이 눌리면 앱 안에서 한 단계 뒤로 간 뒤 다시 한 칸을 끼운다.
- * 홈에서는 "한 번 더 누르면 나가요" 안내 후, 3초 안에 한 번 더 누르면 나간다.
- * (Apps Script 웹앱은 google.script.history 로 바깥 브라우저 기록을 다룬다)
+ * 웹앱이라 휴대폰 뒤로 버튼을 누르면 앱 밖으로 나가 버린다. 그래서 브라우저 기록에 빈 칸(덫)을 끼워 두고,
+ * 뒤로 버튼이 눌리면 덫 한 칸이 빠지면서 앱 안에서 한 단계 뒤로 간다.
+ *  - 안드로이드 크롬·삼성 인터넷은 "화면을 만지지 않고 칸을 끼우면" 그 앞 칸까지 건너뛰어 앱이 닫힌다.
+ *    그래서 안드로이드에서는 화면을 누르는 순간에만 칸을 끼우고, 홈이 아닌 화면에서는 여유 칸을 3개까지 쌓아 둔다.
+ *  - 아이폰(모든 브라우저가 사파리 엔진)에는 이 규칙이 없어서, 뒤로를 처리한 직후 바로 칸을 다시 끼운다.
+ *  - 홈에서는 "한 번 더 누르면 나가요" 안내 후 한 번 더 누르면 나간다.
+ * (Apps Script 웹앱은 google.script.history 로 바깥 브라우저 기록을 다룬다. state.n = 덫 번호)
  */
 const HIST = (window.google && google.script && google.script.history) || null;
-let backTrap = false, exitTimer = null;
+let trapN = 0, exitArmed = false, exitTimer = null;
+const UA = navigator.userAgent || '';
+const IOS = /iPhone|iPad|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+function atHomeRoot() { return !document.getElementById('back') && S.tab === 'home'; }
+function wantTraps() { return !S.token ? 0 : atHomeRoot() ? 1 : 3; }
+/** 칸 끼우기. 아이폰이 아니면 사용자가 방금 화면을 눌렀을 때만 (안 누르고 끼우면 크롬은 앞 칸까지 건너뛴다) */
 function armBackTrap() {
-  if (!HIST || backTrap) return;
-  backTrap = true;
-  HIST.push({ trap: Date.now() }, {}, '');
+  if (!HIST || exitArmed || trapN >= wantTraps()) return;
+  const act = navigator.userActivation;
+  if (!IOS && act && !act.isActive) return;
+  trapN++;
+  HIST.push({ n: trapN }, {}, '');
 }
+// 화면을 누를 때마다 모자란 칸을 하나씩 채운다
+['pointerup', 'keydown'].forEach(function (t) {
+  document.addEventListener(t, function () {
+    if (exitArmed) { exitArmed = false; clearTimeout(exitTimer); }
+    armBackTrap();
+  }, true);
+});
+
 function onBrowserBack(e) {
-  if (e && e.state && e.state.trap) return; // 앞으로 가기로 덫 칸에 다시 들어온 경우
-  backTrap = false;
+  const n = (e && e.state && e.state.n) || 0;
+  if (n >= trapN) { trapN = n; return; } // 앞으로 가기 등
+  trapN = n;                             // 칸이 빠졌다 = 뒤로 버튼 (안드로이드에서는 여기서 칸을 다시 끼우지 않는다)
   if (!S.token) return;
   const busy = document.getElementById('loading').classList.contains('on');
   const modal = document.querySelector('[data-a="no"]');
@@ -967,9 +993,10 @@ function onBrowserBack(e) {
   if (modal) { modal.click(); return armBackTrap(); }     // 확인 창은 닫기
   if (back) { back.click(); return armBackTrap(); }       // 화면의 ← 와 같게
   if (S.tab && S.tab !== 'home') { goTab('home'); return; } // 다른 메뉴 첫 화면 → 홈
-  toast('한 번 더 누르면 앱을 나가요');                       // 홈: 3초 안에 한 번 더 → 나가기
+  toast('한 번 더 누르면 앱을 나가요');                        // 홈: 한 번 더 → 나가기 (여유 칸이 남았으면 한두 번 더)
+  exitArmed = true;
   clearTimeout(exitTimer);
-  exitTimer = setTimeout(armBackTrap, 3000);
+  exitTimer = setTimeout(function () { exitArmed = false; }, 3000);
 }
 if (HIST) HIST.setChangeHandler(onBrowserBack);
 
@@ -1341,7 +1368,8 @@ function viewMe() {
   S.tab = 'me';
   const d = S.doctor || {};
   const who = viewingOther() ? nim(S.viewName) : (d.patientCall || nim(S.viewName));
-  const info = [['나이대', d.ageGroup], ['성별', d.sex], ['앓고 있는 질환·병력', d.conditions], ['수술·입원 기록', d.surgeries],
+  const blood = d.bloodType ? d.bloodType : (function () { const f = detectBloodType(); return f ? f.text + ' (결과지 ' + fmtDate(f.date) + '에서 찾음)' : ''; })();
+  const info = [['나이대', d.ageGroup], ['성별', d.sex], ['혈액형', blood], ['앓고 있는 질환·병력', d.conditions], ['수술·입원 기록', d.surgeries],
     ['복용 중인 약', d.medications], ['알레르기', d.allergies], ['특히 걱정되는 점', d.concerns]].filter(function (x) { return x[1]; });
   const series = collectSeries();
   const watch = series.filter(function (s) { return s.alert || s.trend; })
@@ -1360,7 +1388,7 @@ function viewMe() {
     header('👤 ' + who + ' 건강 요약', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
     sec('📝 건강 정보', info.length
       ? '<dl class="kv">' + info.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>'; }).join('') + '</dl>'
-      : '<p class="muted">아직 입력한 건강 정보가 없어요. 병력·수술·먹는 약을 적어 두면 AI 선생님이 참고해서 설명해 드려요.</p>') +
+      : '<p class="muted">아직 입력한 건강 정보가 없어요. 혈액형·병력·수술·먹는 약을 적어 두면 AI 선생님이 참고해서 설명해 드려요.</p>') +
     (canWrite() ? '<p><button class="block" id="editInfo">✏️ 건강 정보 ' + (info.length ? '고치기' : '입력하기') + '</button></p>' : '') +
     (watch.length ? sec('⚠️ 지켜볼 수치 ' + watch.length, '<ul class="tests trend">' + watch.map(seriesRow).join('') + '</ul>') : '') +
     (diag.length ? sec('🩺 결과지에 나온 진단·판정', '<ul class="plain">' + diag.slice(0, 10).map(function (x) {
@@ -2600,7 +2628,49 @@ async function viewChatHistory() {
   });
 }
 
-function stripDoctor(d) { const c = Object.assign({}, d); delete c._saved; return c; }
+function stripDoctor(d) {
+  const c = Object.assign({}, d); delete c._saved;
+  if (!c.bloodType) { const f = detectBloodType(); if (f) c.bloodType = f.text + ' (결과지에서 확인)'; }
+  return c;
+}
+
+/* ---------------- 혈액형: 직접 입력 또는 결과지에서 찾기 ---------------- */
+
+function bloodText(abo, rh) { return abo ? abo + '형' + (rh ? ' Rh' + rh : '') : (rh ? 'Rh' + rh : ''); }
+/** "A형 Rh+", "AB", "O형(Rh+)", "A+", "Rh(-)", "양성" … → { abo: 'A', rh: '+' } */
+function parseBlood(text) {
+  const t = String(text || '').replace(/\s/g, '').toUpperCase();
+  const m = t.match(/(?:^|[^A-Z])(AB|A|B|O)(?=형|TYPE|$|[^A-Z])/) || t.match(/^(AB|A|B|O)/);
+  let rh = '';
+  const r = t.match(/RH\(?(\+|-|양성|음성|POS|NEG)/) || t.match(/^(?:AB|A|B|O)형?\(?(\+|-)/);
+  if (r) rh = /\+|양성|POS/.test(r[1]) ? '+' : '-';
+  return { abo: m ? m[1] : '', rh: rh };
+}
+/** 결과지(최근 것부터)에서 혈액형 찾기: 검사 항목(혈액형·ABO·Rh) → 글(원문·요약·진단) 순서 */
+function detectBloodType() {
+  let abo = null, rh = null;
+  for (const r of S.records) {
+    const d = r.data;
+    (d.tests || []).forEach(function (t) {
+      const nm = normName(t.name);
+      if (!abo && /혈액형|abo|bloodtype/.test(nm) && !/^rh/.test(nm)) {
+        const p = parseBlood(t.value); if (p.abo) abo = { v: p.abo, r: r }; if (p.rh && !rh) rh = { v: p.rh, r: r };
+      }
+      if (!rh && /^rh|rh(d)?혈액형|rh인자/.test(nm)) {
+        const p = parseBlood(/rh/i.test(t.value) ? t.value : 'RH' + t.value); if (p.rh) rh = { v: p.rh, r: r };
+      }
+    });
+    if (!abo) {
+      const txt = [d.raw_text, d.summary, (d.diagnoses || []).join(' '), d.doctor_opinion].filter(Boolean).join(' ');
+      const m = txt.match(/혈액형\s*[:：]?\s*((?:AB|A|B|O)\s*형?(?:\s*[,/]?\s*Rh\s*\(?\s*(?:[+-]|양성|음성)\s*\)?)?)/i);
+      if (m) { const p = parseBlood(m[1]); if (p.abo) abo = { v: p.abo, r: r }; if (p.rh && !rh) rh = { v: p.rh, r: r }; }
+    }
+    if (abo && rh) break;
+  }
+  if (!abo && !rh) return null;
+  const src = (abo || rh).r;
+  return { text: bloodText(abo ? abo.v : '', rh ? rh.v : ''), date: src.data.date, recordId: src.recordId };
+}
 
 /* ---------------- 설정: 의사 선생님 / 계정 ---------------- */
 
@@ -3054,6 +3124,13 @@ function viewDoctor(firstTime, onBack) {
     '<label>저를 이렇게 불러주세요</label><input id="patientCall" value="' + esc(d.patientCall) + '" placeholder="예) 어머님, 김OO님">' +
     '<div class="row"><div class="grow"><label>나이대</label><input id="ageGroup" value="' + esc(d.ageGroup) + '" placeholder="예) 60대"></div>' +
     '<div class="grow"><label>성별</label><select id="sex">' + ['', '여성', '남성'].map(function (s) { return '<option' + (d.sex === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div></div>' +
+    (function () {
+      const cur = parseBlood(d.bloodType), found = detectBloodType();
+      const opt = function (id, list, v) { return '<select id="' + id + '">' + list.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === v ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>'; };
+      return '<div class="row"><div class="grow"><label>혈액형</label>' + opt('abo', [['', '모름'], ['A', 'A형'], ['B', 'B형'], ['O', 'O형'], ['AB', 'AB형']], cur.abo) + '</div>' +
+        '<div class="grow"><label>Rh</label>' + opt('rh', [['', '모름'], ['+', 'Rh+'], ['-', 'Rh-']], cur.rh) + '</div></div>' +
+        (found ? '<p class="muted small">결과지에서 찾은 혈액형: <b>' + esc(found.text) + '</b> (' + esc(fmtDate(found.date)) + ')' + (d.bloodType ? '' : ' — 비워 두면 이걸 써요') + '</p>' : '');
+    })() +
     '<label>앓고 있는 질환 / 병력</label><input id="conditions" value="' + esc(d.conditions) + '" placeholder="예) 고혈압, 당뇨 전단계">' +
     '<label>수술·입원 기록</label><input id="surgeries" value="' + esc(d.surgeries) + '" placeholder="예) 2019 담낭 절제술, 2023 백내장 수술">' +
     '<label>복용 중인 약</label><input id="medications" value="' + esc(d.medications) + '" placeholder="예) 혈압약 아침 1알">' +
@@ -3079,6 +3156,7 @@ function viewDoctor(firstTime, onBack) {
       tone: pick('tone') || 'friendly', level: pick('level') || 'easy', length: pick('length') || 'medium',
       lifestyleTips: $('#lifestyleTips').checked,
       patientCall: val('#patientCall'), ageGroup: val('#ageGroup'), sex: $('#sex').value,
+      bloodType: bloodText($('#abo').value, $('#rh').value),
       conditions: val('#conditions'), surgeries: val('#surgeries'), medications: val('#medications'), allergies: val('#allergies'), concerns: val('#concerns'),
       customPrompt: $('#customPrompt').value.trim()
     };

@@ -33,12 +33,12 @@ window.google = { script: {} };
 Object.defineProperty(window.google.script, 'run', { get: makeRunner });
 // google.script.history 흉내: 실제로는 바깥 브라우저 기록을 다룬다
 window.google.script.history = {
-  push(st) { history.pushState(st, ''); }, replace(st) { history.replaceState(st, ''); },
+  push(st) { (window.__pushes = window.__pushes || []).push(navigator.userActivation ? navigator.userActivation.isActive : null); history.pushState(st, ''); }, replace(st) { history.replaceState(st, ''); },
   setChangeHandler(f) { window.addEventListener('popstate', e => f({ state: e.state })); }
 };`;
 
-async function newUserPage(browser) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+async function newUserPage(browser, userAgent) {
+  const ctx = await browser.newContext(Object.assign({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 }, userAgent ? { userAgent } : {}));
   const calls = []; // 서버 호출 기록 (로그인 속도 검사용)
   await ctx.exposeFunction('__gas', (fn, argsJson) => {
     calls.push(fn);
@@ -415,6 +415,7 @@ async function addManualRecord(page, title) {
   check(!!(await tr.$('.tabbar [data-go="home"].on')), '뒤로 버튼: 다른 메뉴 첫 화면 → 홈');
   await tr.goBack(); await tr.waitForTimeout(300);
   check((await tr.innerText('#toast')).includes('한 번 더') && !!(await tr.$('.tabbar')), '뒤로 버튼: 홈에서는 "한 번 더 누르면 나가요" 안내 (바로 나가지 않음)');
+  check(await tr.evaluate(() => (window.__pushes || []).length > 0 && window.__pushes.every(a => a === true)), '뒤로 버튼(안드로이드): 화면을 누를 때만 칸을 끼움 (크롬이 건너뛰지 않게)');
   await tr.waitForTimeout(3200);
   await tr.click('.tabbar [data-go="chat"]'); await waitIdle(tr);
   check((await bodyText(tr)).includes('선생님께 새로 묻기') && (await bodyText(tr)).includes('지난 상담'), '메뉴바: 상담 → 새로 묻기 + 지난 상담');
@@ -429,6 +430,32 @@ async function addManualRecord(page, title) {
   check(meText.includes('건강 요약') && meText.includes('고혈압') && meText.includes('2019 담낭 절제술') && meText.includes('혈압약 아침 1알'), '건강 요약: 건강 정보(병력·수술·약) 입력 후 바로 요약에 표시');
   check(await tr.evaluate(() => S.doctor.surgeries === '2019 담낭 절제술'), '건강 정보: 수술·입원 기록 저장');
   await tr.screenshot({ path: OUT + '/me_summary.png', fullPage: true });
+  // 10-7) 혈액형: 글자 읽기 → 결과지에서 찾기 → 직접 입력이 우선
+  const bp = await tr.evaluate(() => ['A형 Rh+', 'AB', 'O형(Rh+)', 'A+', 'Rh(-)', 'B형', 'ab형 rh(-)'].map(x => { const p = parseBlood(x); return p.abo + p.rh; }).join(','));
+  check(bp === 'A+,AB,O+,A+,-,B,AB-', '혈액형: 여러 표기 읽기 → ' + bp);
+  await tr.evaluate(() => viewEdit(null, { title: '2023 건강검진', date: '2023-05-02', record_type: '정기건강검진', tests: [{ name: '혈액형', value: 'A형', flag: '판정없음' }, { name: 'Rh', value: '+', flag: '판정없음' }] }));
+  await tr.click('#save'); await waitIdle(tr);
+  await tr.evaluate(() => viewMe()); await waitIdle(tr);
+  check((await bodyText(tr)).includes('A형 Rh+ (결과지 2023.05.02에서 찾음)'), '혈액형: 직접 안 적어도 결과지에서 찾아 요약에 표시');
+  check(await tr.evaluate(() => stripDoctor(S.doctor).bloodType === 'A형 Rh+ (결과지에서 확인)'), '혈액형: AI 선생님에게도 결과지 혈액형 전달');
+  await tr.click('#editInfo'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('결과지에서 찾은 혈액형: A형 Rh+'), '혈액형: 입력 화면에 결과지에서 찾은 혈액형 안내');
+  await tr.selectOption('#abo', 'B'); await tr.selectOption('#rh', '-');
+  await tr.click('#save'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('B형 Rh-') && !(await bodyText(tr)).includes('에서 찾음'), '혈액형: 직접 적으면 그게 우선');
+
+  // 10-8) 아이폰: 뒤로 처리 직후 바로 칸을 다시 끼워, 화면을 안 눌러도 계속 앱 안에서 뒤로
+  const ip = await newUserPage(browser, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1');
+  await login(ip, '수치', '1234');
+  await ip.click('.tabbar [data-go="records"]'); await waitIdle(ip);
+  await ip.click('.card[data-id]'); await waitIdle(ip);
+  await ip.click('[data-test]'); await waitIdle(ip);          // 항목 그래프
+  await ip.click('[data-rec]'); await waitIdle(ip);           // 그날 기록 (4단계 깊이)
+  const ipBefore = await ip.evaluate(() => window.__pushes.length);
+  for (let i = 0; i < 4; i++) { await ip.goBack(); await waitIdle(ip); }
+  check(!!(await ip.$('.tabbar [data-go="home"].on')) || !!(await ip.$('.card[data-id]')), '뒤로 버튼(아이폰): 화면을 안 눌러도 4번 연속 뒤로 → 앱 안');
+  check(await ip.evaluate(() => IOS === true) && (await ip.evaluate(() => window.__pushes.length)) > ipBefore, '뒤로 버튼(아이폰): 아이폰으로 알아보고, 뒤로 직후 칸을 다시 끼움 (기존 동작 유지)');
+  await ip.close();
 
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);

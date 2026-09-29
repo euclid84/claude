@@ -13,7 +13,7 @@
 
 const APP_NAME = '우리가족 진료기록';
 // 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 
 /** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
 function api_version() { return APP_VERSION; }
@@ -1601,7 +1601,7 @@ const TEST_NAME_GUIDE = [
   'HBsAg', 'Anti-HBs', 'HBeAg', 'Anti-HBe', 'HBV-DNA', 'AFP', 'PIVKA-II',
   '총콜레스테롤', 'LDL 콜레스테롤', 'HDL 콜레스테롤', '중성지방', '공복혈당', '당화혈색소(HbA1c)',
   '크레아티닌', 'eGFR', '인(P)', '요산', '혈색소(Hb)', '혈소판', '백혈구',
-  '수축기 혈압', '이완기 혈압', '체질량지수(BMI)', '허리둘레'
+  '수축기 혈압', '이완기 혈압', '체질량지수(BMI)', '허리둘레', '혈액형(ABO)', 'Rh 혈액형'
 ].join(', ');
 
 /**
@@ -1781,6 +1781,7 @@ function buildDoctorPrompt_(d, recordsJson, asGuardian) {
   if (d.patientCall) lines.push('- 환자를 부르는 호칭: ' + d.patientCall);
   if (d.ageGroup) lines.push('- 나이대: ' + d.ageGroup);
   if (d.sex) lines.push('- 성별: ' + d.sex);
+  if (d.bloodType) lines.push('- 혈액형: ' + d.bloodType);
   if (d.conditions) lines.push('- 앓고 있는 질환/병력: ' + d.conditions);
   if (d.surgeries) lines.push('- 수술·입원 기록: ' + d.surgeries);
   if (d.medications) lines.push('- 복용 중인 약: ' + d.medications);
