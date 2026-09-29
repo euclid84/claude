@@ -2,6 +2,9 @@
 
 앱 화면의 **홈 맨 아래 → 업데이트 이력**과 같은 내용입니다. 버전은 `apps-script/Code.gs`와 `apps-script/App.html`의 `APP_VERSION`에 있습니다.
 
+## v1.10 — 2026-09-29
+- 📱 안드로이드 뒤로 버튼 추가 수정: 크롬은 사용자 조작 한 번에 기록 칸을 하나만 인정함(두 번째 pushState 때 앞 칸이 건너뛰기 칸이 됨). 화면을 누르는 순간(pointerup)과 그로 열린 화면(render)에서 두 칸을 끼우던 경우가 있어, 누를 때마다 최대 한 칸만 끼우도록(`freshTap`) 수정. 아이폰은 그대로
+
 ## v1.9 — 2026-09-29
 - 📱 안드로이드(크롬·삼성 인터넷) 뒤로 버튼 수정: 크롬은 사용자 조작 없이 pushState한 칸이 있으면 앞 칸까지 건너뛰어(history manipulation intervention) 두 번째 뒤로에 앱이 닫혔음 → 안드로이드는 화면을 누를 때(pointerup·keydown, `navigator.userActivation.isActive`)만 칸을 끼우고, 홈이 아닌 화면에서는 여유 칸 3개까지. 아이폰은 기존처럼 뒤로 처리 직후 바로 다시 끼움
 - 🩸 혈액형: 건강정보에 ABO·Rh 선택 칸(`bloodType`). 비워 두면 결과지(검사 항목 혈액형·ABO·Rh, 원문·요약 글)에서 찾아 건강 요약·AI 프롬프트에 사용. 결과지 읽기 표준 이름에 '혈액형(ABO)', 'Rh 혈액형' 추가, 검사 사전에 설명 추가

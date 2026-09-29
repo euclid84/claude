@@ -32,8 +32,9 @@ function makeRunner(){ let ok=function(){}, fail=function(){};
 window.google = { script: {} };
 Object.defineProperty(window.google.script, 'run', { get: makeRunner });
 // google.script.history 흉내: 실제로는 바깥 브라우저 기록을 다룬다
+['pointerup', 'keydown'].forEach(t => window.addEventListener(t, () => { window.__taps = (window.__taps || 0) + 1; }, true));
 window.google.script.history = {
-  push(st) { (window.__pushes = window.__pushes || []).push(navigator.userActivation ? navigator.userActivation.isActive : null); history.pushState(st, ''); }, replace(st) { history.replaceState(st, ''); },
+  push(st) { (window.__pushes = window.__pushes || []).push(navigator.userActivation ? navigator.userActivation.isActive : null); (window.__pushTaps = window.__pushTaps || []).push(window.__taps || 0); history.pushState(st, ''); }, replace(st) { history.replaceState(st, ''); },
   setChangeHandler(f) { window.addEventListener('popstate', e => f({ state: e.state })); }
 };`;
 
@@ -416,6 +417,7 @@ async function addManualRecord(page, title) {
   await tr.goBack(); await tr.waitForTimeout(300);
   check((await tr.innerText('#toast')).includes('한 번 더') && !!(await tr.$('.tabbar')), '뒤로 버튼: 홈에서는 "한 번 더 누르면 나가요" 안내 (바로 나가지 않음)');
   check(await tr.evaluate(() => (window.__pushes || []).length > 0 && window.__pushes.every(a => a === true)), '뒤로 버튼(안드로이드): 화면을 누를 때만 칸을 끼움 (크롬이 건너뛰지 않게)');
+  check(await tr.evaluate(() => { const t = window.__pushTaps || []; return t.length > 1 && new Set(t).size === t.length; }), '뒤로 버튼(안드로이드): 한 번 누를 때 칸은 하나만 (크롬이 앞 칸을 건너뛰지 않게)');
   await tr.waitForTimeout(3200);
   await tr.click('.tabbar [data-go="chat"]'); await waitIdle(tr);
   check((await bodyText(tr)).includes('선생님께 새로 묻기') && (await bodyText(tr)).includes('지난 상담'), '메뉴바: 상담 → 새로 묻기 + 지난 상담');
