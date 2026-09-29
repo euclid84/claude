@@ -210,6 +210,32 @@
   .tpill small { font-size: 0.72em; font-weight: 500; color: var(--ink-2); }
   .tpill.bad { background: var(--bad-bg); color: var(--bad); }
   .tpill.warn { background: var(--warn-bg); color: var(--warn); }
+  /* 하단 메뉴바 (로그인하면 항상) — 누르기 쉽게 크게, 지금 메뉴는 색으로 */
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--card); border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 12px rgba(40, 30, 10, .07); padding-bottom: env(safe-area-inset-bottom); }
+  .tabbar .in { max-width: 680px; margin: 0 auto; display: flex; }
+  .tabbar button { flex: 1 1 0; min-width: 0; border: none; border-radius: 0; background: none; min-height: 66px; padding: 6px 2px;
+    flex-direction: column; gap: 2px; font-size: 0.8em; font-weight: 700; color: var(--ink-2); box-shadow: none; }
+  .tabbar button .ti { font-size: 1.45em; line-height: 1.1; }
+  .tabbar button .tl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabbar button.on { color: var(--primary-dark); background: var(--primary-soft); box-shadow: inset 0 3px 0 var(--primary); }
+  body.has-nav #app { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  body.has-nav .composer { bottom: calc(66px + env(safe-area-inset-bottom)); padding-bottom: 12px; }
+  body.has-nav #toast { bottom: calc(96px + env(safe-area-inset-bottom)); }
+  /* 홈 인사: 이름을 누르면 건강 요약 */
+  .hero .namebtn { all: unset; cursor: pointer; display: inline; font: inherit; color: inherit; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+  .hero .namebtn:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+  .hero button.mini { min-height: 44px; padding: 6px 16px; background: rgba(255,255,255,.18); color: #fff; border: 1.5px solid rgba(255,255,255,.55); font-size: 0.9em; flex-direction: row; }
+  /* 건강 요약 */
+  .sum h3 { margin-bottom: 10px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; }
+  .kv dt { color: var(--ink-2); font-weight: 700; }
+  .kv dd { margin: 0; font-weight: 700; }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.plain li:first-child { border-top: none; padding-top: 0; }
+  ul.plain li[data-rid] { cursor: pointer; }
+  ul.plain li small { display: block; color: var(--ink-2); font-size: 0.85em; }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }

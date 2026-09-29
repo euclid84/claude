@@ -30,7 +30,12 @@ function makeRunner(){ let ok=function(){}, fail=function(){};
     return (...a)=>{ window.__gas(p, JSON.stringify(a)).then(res => { const o = JSON.parse(res); if (o.error) fail(new Error(o.error)); else ok(o.value); }); };
   }}); return r; }
 window.google = { script: {} };
-Object.defineProperty(window.google.script, 'run', { get: makeRunner });`;
+Object.defineProperty(window.google.script, 'run', { get: makeRunner });
+// google.script.history 흉내: 실제로는 바깥 브라우저 기록을 다룬다
+window.google.script.history = {
+  push(st) { history.pushState(st, ''); }, replace(st) { history.replaceState(st, ''); },
+  setChangeHandler(f) { window.addEventListener('popstate', e => f({ state: e.state })); }
+};`;
 
 async function newUserPage(browser) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
@@ -395,6 +400,35 @@ async function addManualRecord(page, title) {
   check(await tr.evaluate(() => !!document.querySelector('#q') && document.body.innerText.includes('기록 질문입니다')), '지난 상담: 누르면 그 대화로 (이어서 질문 가능)');
   await tr.click('#back'); await waitIdle(tr);
   check((await bodyText(tr)).includes('지난 상담') && !!(await tr.$('.hist')), '지난 상담: 대화에서 뒤로 → 모아보기');
+
+  // 10-6) 하단 메뉴바 · 휴대폰 뒤로 버튼 · 건강 요약
+  await tr.evaluate(() => viewHome()); await waitIdle(tr);
+  const tabs = await tr.evaluate(() => [...document.querySelectorAll('.tabbar [data-go]')].map(b => b.getAttribute('data-go') + (b.classList.contains('on') ? '*' : '')).join(','));
+  check(tabs === 'home*,records,add,chat,me', '메뉴바: 로그인하면 하단 메뉴 항상 (홈 선택됨) → ' + tabs);
+  await tr.click('.tabbar [data-go="records"]'); await waitIdle(tr);
+  check(!!(await tr.$('.card[data-id]')) && !!(await tr.$('.tabbar [data-go="records"].on')), '메뉴바: 결과지 → 결과지 모아보기');
+  await tr.click('.card[data-id]'); await waitIdle(tr);
+  check(!!(await tr.$('.tabbar')), '메뉴바: 기록 상세에서도 보임');
+  await tr.goBack(); await waitIdle(tr);
+  check(!!(await tr.$('.card[data-id]')), '뒤로 버튼: 기록 상세 → 결과지 모아보기 (앱 안에서)');
+  await tr.goBack(); await waitIdle(tr);
+  check(!!(await tr.$('.tabbar [data-go="home"].on')), '뒤로 버튼: 다른 메뉴 첫 화면 → 홈');
+  await tr.goBack(); await tr.waitForTimeout(300);
+  check((await tr.innerText('#toast')).includes('한 번 더') && !!(await tr.$('.tabbar')), '뒤로 버튼: 홈에서는 "한 번 더 누르면 나가요" 안내 (바로 나가지 않음)');
+  await tr.waitForTimeout(3200);
+  await tr.click('.tabbar [data-go="chat"]'); await waitIdle(tr);
+  check((await bodyText(tr)).includes('선생님께 새로 묻기') && (await bodyText(tr)).includes('지난 상담'), '메뉴바: 상담 → 새로 묻기 + 지난 상담');
+  await tr.click('.tabbar [data-go="home"]'); await waitIdle(tr);
+  await tr.click('#me'); await waitIdle(tr);
+  let meText = await bodyText(tr);
+  check(meText.includes('건강 요약') && meText.includes('지켜볼 수치') && meText.includes('eGFR') && meText.includes('올린 결과지 4건'), '건강 요약: 이름을 누르면 요약 (지켜볼 수치·결과지)');
+  await tr.click('#editInfo'); await waitIdle(tr);
+  await tr.fill('#conditions', '고혈압'); await tr.fill('#surgeries', '2019 담낭 절제술'); await tr.fill('#medications', '혈압약 아침 1알');
+  await tr.click('#save'); await waitIdle(tr);
+  meText = await bodyText(tr);
+  check(meText.includes('건강 요약') && meText.includes('고혈압') && meText.includes('2019 담낭 절제술') && meText.includes('혈압약 아침 1알'), '건강 요약: 건강 정보(병력·수술·약) 입력 후 바로 요약에 표시');
+  check(await tr.evaluate(() => S.doctor.surgeries === '2019 담낭 절제술'), '건강 정보: 수술·입원 기록 저장');
+  await tr.screenshot({ path: OUT + '/me_summary.png', fullPage: true });
 
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);

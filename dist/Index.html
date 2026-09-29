@@ -215,6 +215,32 @@
   .tpill small { font-size: 0.72em; font-weight: 500; color: var(--ink-2); }
   .tpill.bad { background: var(--bad-bg); color: var(--bad); }
   .tpill.warn { background: var(--warn-bg); color: var(--warn); }
+  /* 하단 메뉴바 (로그인하면 항상) — 누르기 쉽게 크게, 지금 메뉴는 색으로 */
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--card); border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 12px rgba(40, 30, 10, .07); padding-bottom: env(safe-area-inset-bottom); }
+  .tabbar .in { max-width: 680px; margin: 0 auto; display: flex; }
+  .tabbar button { flex: 1 1 0; min-width: 0; border: none; border-radius: 0; background: none; min-height: 66px; padding: 6px 2px;
+    flex-direction: column; gap: 2px; font-size: 0.8em; font-weight: 700; color: var(--ink-2); box-shadow: none; }
+  .tabbar button .ti { font-size: 1.45em; line-height: 1.1; }
+  .tabbar button .tl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabbar button.on { color: var(--primary-dark); background: var(--primary-soft); box-shadow: inset 0 3px 0 var(--primary); }
+  body.has-nav #app { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  body.has-nav .composer { bottom: calc(66px + env(safe-area-inset-bottom)); padding-bottom: 12px; }
+  body.has-nav #toast { bottom: calc(96px + env(safe-area-inset-bottom)); }
+  /* 홈 인사: 이름을 누르면 건강 요약 */
+  .hero .namebtn { all: unset; cursor: pointer; display: inline; font: inherit; color: inherit; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+  .hero .namebtn:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+  .hero button.mini { min-height: 44px; padding: 6px 16px; background: rgba(255,255,255,.18); color: #fff; border: 1.5px solid rgba(255,255,255,.55); font-size: 0.9em; flex-direction: row; }
+  /* 건강 요약 */
+  .sum h3 { margin-bottom: 10px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; }
+  .kv dt { color: var(--ink-2); font-weight: 700; }
+  .kv dd { margin: 0; font-weight: 700; }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.plain li:first-child { border-top: none; padding-top: 0; }
+  ul.plain li[data-rid] { cursor: pointer; }
+  ul.plain li small { display: block; color: var(--ink-2); font-size: 0.85em; }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
@@ -681,8 +707,14 @@ const TEST_INFO = [
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 const CHANGELOG = [
+  { v: '1.8', date: '2026-09-29', items: [
+    '📱 화면 아래에 메뉴가 항상 떠 있어요: 홈 · 결과지 · 올리기 · 상담 · 내 정보.',
+    '휴대폰의 뒤로 버튼을 눌러도 앱 밖으로 나가지 않고 앱 안에서 한 단계씩 돌아가요. 홈에서 한 번 더 누르면 앱을 나가요.',
+    '👤 홈에서 내 이름을 누르면(또는 아래 "내 정보") 건강 요약이 나와요. 병력·수술·먹는 약과 결과지에서 모은 진단, 지켜볼 수치, 최근 처방 약, 다음 할 일을 한눈에 봐요.',
+    '건강 정보에 "수술·입원 기록" 칸이 생겼어요. AI 선생님도 참고해요.',
+    '💬 상담 메뉴에서 새로 묻기와 지난 상담을 함께 봐요.'] },
   { v: '1.7', date: '2026-09-28', items: [
     '🏠 첫 화면이 수치 변화 화면이 됐어요. 검사마다 최근 수치와 날짜별 그래프를 카드로 보여드려요.',
     '그래프는 오른쪽 끝이 가장 최근이에요. 손가락으로 오른쪽으로 밀면 이전 검사가 나와요.',
@@ -732,7 +764,7 @@ const MIN_PW = 4; // 숫자 4자리도 가능 (가족이 쓰기 쉽게). 짧을�
 const DEFAULT_DOCTOR = {
   presetId: '', doctorName: '', specialty: '가정의학과',
   tone: 'friendly', level: 'easy', length: 'medium', lifestyleTips: true,
-  patientCall: '', ageGroup: '', sex: '', conditions: '', medications: '', allergies: '', concerns: '',
+  patientCall: '', ageGroup: '', sex: '', conditions: '', surgeries: '', medications: '', allergies: '', concerns: '',
   customPrompt: ''
 };
 
@@ -883,8 +915,63 @@ function bindBack(fn) { on('#back', 'click', fn); }
 /** 화면 그리기. opts.console = 관리자 콘솔 모양(업무용: 작은 글씨·표·탭) */
 function render(html, opts) {
   document.body.classList.toggle('console', !!(opts && opts.console));
-  $app.innerHTML = html; window.scrollTo(0, 0);
+  const nav = !!S.token; // 로그인하면 항상 하단 메뉴바
+  document.body.classList.toggle('has-nav', nav);
+  $app.innerHTML = html + (nav ? tabBar() : ''); window.scrollTo(0, 0);
+  if (nav) armBackTrap();
 }
+
+/* ---------------- 하단 메뉴바 ---------------- */
+
+const TABS = [['home', '🏠', '홈'], ['records', '📄', '결과지'], ['add', '📷', '올리기'], ['chat', '💬', '상담'], ['me', '👤', '내 정보']];
+function tabBar() {
+  return '<nav class="tabbar" aria-label="메뉴"><div class="in">' + TABS.filter(function (t) { return t[0] !== 'add' || canWrite(); }).map(function (t) {
+    const label = t[0] === 'me' && viewingOther() ? nim(S.viewName) : t[2];
+    return '<button data-go="' + t[0] + '"' + (S.tab === t[0] ? ' class="on" aria-current="page"' : '') + '><span class="ti" aria-hidden="true">' + t[1] + '</span><span class="tl">' + esc(label) + '</span></button>';
+  }).join('') + '</div></nav>';
+}
+function goTab(t) {
+  S.homeY = 0;
+  if (t === 'home') viewHome();
+  else if (t === 'records') viewRecords();
+  else if (t === 'add') viewAdd();
+  else if (t === 'chat') viewChatHistory().catch(showError);
+  else if (t === 'me') viewMe();
+}
+$app.addEventListener('click', function (e) {
+  const b = e.target.closest && e.target.closest('[data-go]');
+  if (b) goTab(b.getAttribute('data-go'));
+});
+
+/* ---------------- 휴대폰 '뒤로' 버튼 ----------------
+ * 웹앱이라 휴대폰 뒤로 버튼을 누르면 앱 밖으로 나가 버린다. 그래서 브라우저 기록에 한 칸을 끼워 두고(덫),
+ * 뒤로 버튼이 눌리면 앱 안에서 한 단계 뒤로 간 뒤 다시 한 칸을 끼운다.
+ * 홈에서는 "한 번 더 누르면 나가요" 안내 후, 3초 안에 한 번 더 누르면 나간다.
+ * (Apps Script 웹앱은 google.script.history 로 바깥 브라우저 기록을 다룬다)
+ */
+const HIST = (window.google && google.script && google.script.history) || null;
+let backTrap = false, exitTimer = null;
+function armBackTrap() {
+  if (!HIST || backTrap) return;
+  backTrap = true;
+  HIST.push({ trap: Date.now() }, {}, '');
+}
+function onBrowserBack(e) {
+  if (e && e.state && e.state.trap) return; // 앞으로 가기로 덫 칸에 다시 들어온 경우
+  backTrap = false;
+  if (!S.token) return;
+  const busy = document.getElementById('loading').classList.contains('on');
+  const modal = document.querySelector('[data-a="no"]');
+  const back = document.getElementById('back');
+  if (busy) return armBackTrap();
+  if (modal) { modal.click(); return armBackTrap(); }     // 확인 창은 닫기
+  if (back) { back.click(); return armBackTrap(); }       // 화면의 ← 와 같게
+  if (S.tab && S.tab !== 'home') { goTab('home'); return; } // 다른 메뉴 첫 화면 → 홈
+  toast('한 번 더 누르면 앱을 나가요');                       // 홈: 3초 안에 한 번 더 → 나가기
+  clearTimeout(exitTimer);
+  exitTimer = setTimeout(armBackTrap, 3000);
+}
+if (HIST) HIST.setChangeHandler(onBrowserBack);
 
 /* ---------------- 로그인 / 가입 / 복구 ---------------- */
 
@@ -1184,6 +1271,7 @@ async function applyLoad(data) {
 /* ---------------- 홈 (기록 목록) ---------------- */
 
 function viewHome() {
+  S.tab = 'home';
   // 인사 카드: 호칭(의사 선생님 설정의 "저를 이렇게 불러주세요")이 있으면 그걸로 부른다
   const call = (S.doctor && S.doctor.patientCall) || nim(S.viewName);
   const latest = S.records[0];
@@ -1209,7 +1297,8 @@ function viewHome() {
       ? '<p class="notice">내가 대신 관리하는 <b>' + esc(nim(S.viewName)) + '</b>의 기록이에요.</p>'
       : '<p class="notice">' + (S.me.isAdmin ? '👑 관리자로 ' : '') + '<b>' + esc(nim(S.viewName)) + '</b>의 기록을 보고 있어요' +
         (canWrite() ? '' : ' (보기 전용)') + '. 상담 중 알려드리고 싶은 답변은 골라서 보내드릴 수 있어요.</p>') : '') +
-    '<section class="hero"><p class="hello">' + heroTitle + '</p><p class="sub">' + heroSub + '</p>' +
+    '<section class="hero"><p class="hello"><button class="namebtn" id="me">' + heroTitle + '</button></p><p class="sub">' + heroSub + '</p>' +
+    '<p style="margin:-6px 0 14px"><button class="mini" id="me2">👤 ' + (viewingOther() ? esc(nim(S.viewName)) + '의' : '내') + ' 건강 요약 보기 ›</button></p>' +
     (actions.length ? '<div class="actions' + (actions.length === 1 ? ' one' : '') + '">' + actions.join('') + '</div>' : '') + '</section>' +
     (!viewingOther() && S.familyNotes && S.familyNotes.length ? (function () {
       const seen = storageGet(notesSeenKey()) || '';
@@ -1231,6 +1320,7 @@ function viewHome() {
   on('#settings', 'click', viewSettings);
   on('#add', 'click', viewAdd);
   on('#records', 'click', viewRecords);
+  on('#me, #me2', 'click', viewMe);
   on('#askAll', 'click', function () { viewChat('ALL'); });
   on('#notes', 'click', viewFamilyNotes);
   on('#history', 'click', function () { viewChatHistory().catch(showError); });
@@ -1243,8 +1333,63 @@ function viewHome() {
   on('td[data-rec]', 'click', leave(function () { viewDetail(this.getAttribute('data-rec'), viewHome); }));
 }
 
+/**
+ * 내 건강 요약: 처음 입력한 건강정보(병력·수술·약·알레르기) + 결과지에서 모은 것
+ * (지켜볼 수치, 진단, 수술·입원 기록, 최근 처방 약, 다음 할 일)을 한 화면에
+ */
+function viewMe() {
+  S.tab = 'me';
+  const d = S.doctor || {};
+  const who = viewingOther() ? nim(S.viewName) : (d.patientCall || nim(S.viewName));
+  const info = [['나이대', d.ageGroup], ['성별', d.sex], ['앓고 있는 질환·병력', d.conditions], ['수술·입원 기록', d.surgeries],
+    ['복용 중인 약', d.medications], ['알레르기', d.allergies], ['특히 걱정되는 점', d.concerns]].filter(function (x) { return x[1]; });
+  const series = collectSeries();
+  const watch = series.filter(function (s) { return s.alert || s.trend; })
+    .sort(function (a, b) { return (b.alert - a.alert) || b.last.date.localeCompare(a.last.date); });
+  const diag = [];
+  S.records.forEach(function (r) {
+    (r.data.diagnoses || []).forEach(function (x) { if (x && !diag.some(function (y) { return y.text === x; })) diag.push({ text: x, r: r }); });
+  });
+  const ops = S.records.filter(function (r) { return r.data.record_type === '입원·수술'; });
+  const medRec = S.records.find(function (r) { return (r.data.medications || []).length; });
+  const nextRec = S.records.find(function (r) { return r.data.next_visit || (r.data.follow_up || []).length; });
+  const dates = S.records.map(function (r) { return r.data.date; }).filter(Boolean).sort();
+  const sec = function (title, body) { return '<div class="card sum"><h3>' + title + '</h3>' + body + '</div>'; };
+
+  render(
+    header('👤 ' + who + ' 건강 요약', false, '<button class="icon" id="settings" aria-label="설정">⚙️</button>') +
+    sec('📝 건강 정보', info.length
+      ? '<dl class="kv">' + info.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>'; }).join('') + '</dl>'
+      : '<p class="muted">아직 입력한 건강 정보가 없어요. 병력·수술·먹는 약을 적어 두면 AI 선생님이 참고해서 설명해 드려요.</p>') +
+    (canWrite() ? '<p><button class="block" id="editInfo">✏️ 건강 정보 ' + (info.length ? '고치기' : '입력하기') + '</button></p>' : '') +
+    (watch.length ? sec('⚠️ 지켜볼 수치 ' + watch.length, '<ul class="tests trend">' + watch.map(seriesRow).join('') + '</ul>') : '') +
+    (diag.length ? sec('🩺 결과지에 나온 진단·판정', '<ul class="plain">' + diag.slice(0, 10).map(function (x) {
+      return '<li data-rid="' + esc(x.r.recordId) + '"><b>' + esc(x.text) + '</b><small>' + esc(fmtDate(x.r.data.date)) + (x.r.data.hospital ? ' · ' + esc(x.r.data.hospital) : '') + '</small></li>';
+    }).join('') + '</ul>') : '') +
+    (ops.length ? sec('🏥 수술·입원 기록', '<ul class="plain">' + ops.map(function (r) {
+      return '<li data-rid="' + esc(r.recordId) + '"><b>' + esc(r.data.title || '입원·수술') + '</b><small>' + esc(fmtDate(r.data.date)) + (r.data.hospital ? ' · ' + esc(r.data.hospital) : '') + '</small></li>';
+    }).join('') + '</ul>') : '') +
+    (medRec ? sec('💊 최근 처방 약', '<p class="muted" style="margin-top:0">' + esc(fmtDate(medRec.data.date)) + (medRec.data.hospital ? ' · ' + esc(medRec.data.hospital) : '') + '</p>' +
+      '<ul class="plain">' + medRec.data.medications.map(function (m) {
+        return '<li><b>' + esc(m.name) + '</b><small>' + esc([m.dosage, m.schedule, m.days ? m.days + '일' : ''].filter(Boolean).join(' · ')) + '</small></li>';
+      }).join('') + '</ul>') : '') +
+    (nextRec ? sec('📅 다음 할 일', (nextRec.data.next_visit ? '<p style="margin-top:0"><b>' + esc(nextRec.data.next_visit) + '</b></p>' : '') +
+      '<ul>' + (nextRec.data.follow_up || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+      '<p class="muted small">' + esc(fmtDate(nextRec.data.date) + ' ' + (nextRec.data.title || '')) + ' 결과지에서</p>') : '') +
+    sec('📄 결과지', S.records.length
+      ? '<p style="margin:0">올린 결과지 <b>' + S.records.length + '건</b>' + (dates.length ? ' · ' + esc(fmtDate(dates[0])) + ' ~ ' + esc(fmtDate(dates[dates.length - 1])) : '') + '</p>'
+      : '<p class="muted" style="margin:0">아직 올린 결과지가 없어요.</p>') +
+    '<p class="muted small">결과지와 입력한 정보로 모은 요약이에요. 정확한 판단은 담당 의사 선생님과 상의하세요.</p>'
+  );
+  on('#settings', 'click', viewSettings);
+  on('#editInfo', 'click', function () { viewDoctor(false, viewMe); });
+  on('[data-series]', 'click', function () { viewTrend(this.getAttribute('data-series'), viewMe); });
+  on('[data-rid]', 'click', function () { viewDetail(this.getAttribute('data-rid'), viewMe); });
+}
+
 /** 결과지 모아보기: 올린 결과지(기록)를 날짜순 카드로. 종류별로 거르기, 6건 이상이면 찾기 */
 function viewRecords() {
+  S.tab = 'records';
   const q = S.search.toLowerCase();
   const types = RECORD_TYPES.filter(function (t) { return S.records.some(function (r) { return r.data.record_type === t; }); });
   if (S.filter !== '전체' && types.indexOf(S.filter) === -1) S.filter = '전체';
@@ -1294,6 +1439,7 @@ function isAbnormal(t) { return ['높음', '낮음', '이상', '경계'].indexOf
 /* ---------------- 결과지 등록 (입력) ---------------- */
 
 function viewAdd() {
+  S.tab = 'add';
   S.pendingImages = [];
   S.keptImageIds = [];
   renderAdd();
@@ -2404,6 +2550,7 @@ function fmtWhen(iso) {
  * 상담은 아이디(계정)에 저장되므로 어느 기기에서 로그인해도 같다.
  */
 async function viewChatHistory() {
+  S.tab = 'chat';
   loading('지난 상담을 불러오는 중…');
   const all = await loadChats('*');
   done();
@@ -2420,8 +2567,10 @@ async function viewChatHistory() {
   };
   const qCount = all.filter(function (m) { return m.role === 'user'; }).length;
   render(
-    header('🗂 지난 상담', true) +
+    header('💬 선생님 상담', false) +
     (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 상담이에요.</p>' : '') +
+    (S.records.length ? '<p><button class="primary block" id="askNew">💬 선생님께 새로 묻기 (전체 기록 보고 답해요)</button></p>' : '') +
+    '<h2>🗂 지난 상담</h2>' +
     (list.length
       ? '<p class="muted">질문 ' + qCount + '개 · 최근 대화가 위에 있어요. 누르면 이어서 물어볼 수 있어요.</p>' +
         list.map(function (t) {
@@ -2442,7 +2591,7 @@ async function viewChatHistory() {
         }).join('')
       : '<div class="card"><p>아직 선생님께 물어본 내용이 없어요.</p><p class="muted">홈의 💬 선생님께 묻기나, 기록 안의 "질문하기"로 물어보면 여기에 모여요.</p></div>')
   );
-  bindBack(viewHome);
+  on('#askNew', 'click', function () { viewChat('ALL', null, function () { viewChatHistory().catch(showError); }); });
   on('[data-thread]', 'click', function () {
     const id = this.getAttribute('data-thread');
     const back = function () { viewChatHistory().catch(showError); };
@@ -2883,7 +3032,8 @@ function radioGroup(name, value, options) {
   }).join('');
 }
 
-function viewDoctor(firstTime) {
+/** onBack: 저장·뒤로 뒤에 보여줄 화면 (없으면 설정) */
+function viewDoctor(firstTime, onBack) {
   const d = S.doctor;
   render(
     header(firstTime ? '의사 선생님 설정 (처음 1회)' : '의사 선생님 설정', !firstTime) +
@@ -2905,6 +3055,7 @@ function viewDoctor(firstTime) {
     '<div class="row"><div class="grow"><label>나이대</label><input id="ageGroup" value="' + esc(d.ageGroup) + '" placeholder="예) 60대"></div>' +
     '<div class="grow"><label>성별</label><select id="sex">' + ['', '여성', '남성'].map(function (s) { return '<option' + (d.sex === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div></div>' +
     '<label>앓고 있는 질환 / 병력</label><input id="conditions" value="' + esc(d.conditions) + '" placeholder="예) 고혈압, 당뇨 전단계">' +
+    '<label>수술·입원 기록</label><input id="surgeries" value="' + esc(d.surgeries) + '" placeholder="예) 2019 담낭 절제술, 2023 백내장 수술">' +
     '<label>복용 중인 약</label><input id="medications" value="' + esc(d.medications) + '" placeholder="예) 혈압약 아침 1알">' +
     '<label>알레르기</label><input id="allergies" value="' + esc(d.allergies) + '">' +
     '<label>특히 걱정되는 점</label><input id="concerns" value="' + esc(d.concerns) + '" placeholder="예) 콜레스테롤, 무릎 관절">' +
@@ -2928,12 +3079,12 @@ function viewDoctor(firstTime) {
       tone: pick('tone') || 'friendly', level: pick('level') || 'easy', length: pick('length') || 'medium',
       lifestyleTips: $('#lifestyleTips').checked,
       patientCall: val('#patientCall'), ageGroup: val('#ageGroup'), sex: $('#sex').value,
-      conditions: val('#conditions'), medications: val('#medications'), allergies: val('#allergies'), concerns: val('#concerns'),
+      conditions: val('#conditions'), surgeries: val('#surgeries'), medications: val('#medications'), allergies: val('#allergies'), concerns: val('#concerns'),
       customPrompt: $('#customPrompt').value.trim()
     };
   }
 
-  bindBack(viewSettings);
+  bindBack(onBack || viewSettings);
   on('#skip', 'click', viewHome);
   on('#preview', 'click', async function () {
     try {
@@ -2949,8 +3100,8 @@ function viewDoctor(firstTime) {
       loading('저장하는 중…');
       await dcall('api_saveDoctorProfile', S.token, await Crypt.encryptJson(S.dek, doctor));
       S.doctor = Object.assign({}, doctor, { _saved: true });
-      done(); toast('의사 선생님 설정을 저장했습니다.');
-      if (firstTime) viewHome(); else viewSettings();
+      done(); toast(onBack ? '건강 정보를 저장했습니다.' : '의사 선생님 설정을 저장했습니다.');
+      if (firstTime) viewHome(); else (onBack || viewSettings)();
     } catch (e) { showError(e); }
   });
 }

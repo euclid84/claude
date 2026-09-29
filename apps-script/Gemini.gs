@@ -252,6 +252,7 @@ function buildDoctorPrompt_(d, recordsJson, asGuardian) {
   if (d.ageGroup) lines.push('- 나이대: ' + d.ageGroup);
   if (d.sex) lines.push('- 성별: ' + d.sex);
   if (d.conditions) lines.push('- 앓고 있는 질환/병력: ' + d.conditions);
+  if (d.surgeries) lines.push('- 수술·입원 기록: ' + d.surgeries);
   if (d.medications) lines.push('- 복용 중인 약: ' + d.medications);
   if (d.allergies) lines.push('- 알레르기: ' + d.allergies);
   if (d.concerns) lines.push('- 특히 걱정하는 점: ' + d.concerns);

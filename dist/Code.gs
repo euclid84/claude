@@ -13,7 +13,7 @@
 
 const APP_NAME = '우리가족 진료기록';
 // 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 
 /** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
 function api_version() { return APP_VERSION; }
@@ -1782,6 +1782,7 @@ function buildDoctorPrompt_(d, recordsJson, asGuardian) {
   if (d.ageGroup) lines.push('- 나이대: ' + d.ageGroup);
   if (d.sex) lines.push('- 성별: ' + d.sex);
   if (d.conditions) lines.push('- 앓고 있는 질환/병력: ' + d.conditions);
+  if (d.surgeries) lines.push('- 수술·입원 기록: ' + d.surgeries);
   if (d.medications) lines.push('- 복용 중인 약: ' + d.medications);
   if (d.allergies) lines.push('- 알레르기: ' + d.allergies);
   if (d.concerns) lines.push('- 특히 걱정하는 점: ' + d.concerns);
