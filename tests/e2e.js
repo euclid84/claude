@@ -353,13 +353,23 @@ async function addManualRecord(page, title) {
     atRight: (w => w.scrollLeft >= w.scrollWidth - w.clientWidth - 1)(document.querySelector('.mxwrap')),
     cols: document.querySelectorAll('.mx thead th').length,
     rows: document.querySelectorAll('.mx tbody th.rowh').length,
-    groups: [...document.querySelectorAll('.mx tr.grp')].map(r => r.innerText.trim()),
+    groups: [...document.querySelectorAll('.mx tr.grp [data-fold]')].map(b => b.getAttribute('data-fold')),
     ldl151: [...document.querySelectorAll('.mx td.bad')].some(td => td.innerText.startsWith('151'))
   }));
   check(mx.firstDate === '202404.10' && mx.lastDate === '202510.10' && mx.cols === 5 && mx.atRight, '전체 표: 그래프처럼 오른쪽 끝이 최신, 처음에 오른쪽 끝 → ' + mx.firstDate + '~' + mx.lastDate + ' / ' + mx.atRight);
   check(mx.rows === 6, '전체 표: 검사마다 한 줄 (이름이 달라도 묶음) → ' + mx.rows);
   check(JSON.stringify(mx.groups) === JSON.stringify(['혈당', '콜레스테롤', '간', '콩팥', '혈액', '소변']), '전체 표: 분류별로 묶음 → ' + mx.groups.join(','));
   check(mx.ldl151, '전체 표: 범위 밖 칸은 색 표시');
+  check(await tr.evaluate(() => getComputedStyle(document.querySelector('.mx thead th:nth-child(2)')).position === 'sticky'), '전체 표: 날짜 줄 고정 (아래로 내려도 보임)');
+  await tr.click('[data-tcat="간"]'); await waitIdle(tr);
+  const liver = await tr.evaluate(() => ({ cols: [...document.querySelectorAll('.mx thead th')].slice(1).map(th => th.innerText.replace(/\s/g, '')).join(','), rows: document.querySelectorAll('.mx tbody th.rowh').length }));
+  check(liver.cols === '202404.10,202510.10' && liver.rows === 1, '전체 표: 분류 필터 → 그 검사를 한 날짜만 (빈 칸 줄이기) → ' + liver.cols);
+  await tr.click('[data-tcat="전체"]'); await waitIdle(tr);
+  await tr.click('[data-fold="콜레스테롤"]'); await waitIdle(tr);
+  const folded = await tr.evaluate(() => ({ ldl: !!document.querySelector('.mx tbody th.rowh[data-series^="LDL"]'), label: document.querySelector('[data-fold="콜레스테롤"]').innerText }));
+  check(!folded.ldl && folded.label.includes('접힘'), '전체 표: 분류 이름을 누르면 접기');
+  await tr.click('[data-fold="콜레스테롤"]'); await waitIdle(tr);
+  check(!!(await tr.$('.mx tbody th.rowh[data-series^="LDL"]')), '전체 표: 다시 누르면 펴기');
   await tr.screenshot({ path: OUT + '/trend_table.png', fullPage: true });
   await tr.click('.mx td.bad'); await waitIdle(tr);
   check((await bodyText(tr)).includes('검진'), '전체 표: 숫자를 누르면 그날 기록');

@@ -6,8 +6,12 @@
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.11';
+const APP_VERSION = '1.12';
 const CHANGELOG = [
+  { v: '1.12', date: '2026-09-30', items: [
+    '📋 전체 표를 아래로 내려도 맨 위 날짜 줄이 고정돼서 어느 날 검사인지 항상 보여요.',
+    '표 위에서 분류(간, 콜레스테롤, 간염·간암 검사 등)를 고르면 그 검사를 한 날짜만 보여서 빈 칸이 줄어요.',
+    '전체로 볼 때도 분류 이름을 누르면 접었다 펼 수 있어요.'] },
   { v: '1.11', date: '2026-09-30', items: [
     '📊 결과지를 지우지 않고 "수치 변화 표·그래프에서만 빼기"를 할 수 있어요. 결과지 내용은 남아서 선생님 상담에 그대로 쓰여요.',
     '🧹 결과지 화면 맨 위 "정리 도우미"가 겹쳐 보이는 결과지(예: 병원 문자와 실제 결과지)를 찾아 하나로 합치기를 추천해요. 합치면 수치·소견·사진·상담이 한곳에 모여요.',
@@ -662,6 +666,11 @@ function viewHome() {
     if (p.ownerId !== S.ownerId) selectPerson(p.ownerId).catch(showError);
   });
   on('[data-mode]', 'click', function () { S.trendMode = this.getAttribute('data-mode'); S.homeY = window.scrollY; viewHome(); });
+  on('[data-tcat]', 'click', function () { S.tableCat = this.getAttribute('data-tcat'); S.homeY = window.scrollY; viewHome(); });
+  on('[data-fold]', 'click', function () {
+    const c = this.getAttribute('data-fold');
+    S.foldCats[c] = !S.foldCats[c]; S.homeY = window.scrollY; viewHome();
+  });
   on('[data-series]', 'click', leave(function () { viewTrend(this.getAttribute('data-series'), viewHome); }));
   on('td[data-rec]', 'click', leave(function () { viewDetail(this.getAttribute('data-rec'), viewHome); }));
 }
@@ -1694,23 +1703,40 @@ function scrollChartsToLatest() {
 
 /**
  * 검사일별 전체 표: 행 = 검사(분류별로 묶음), 열 = 검사한 날 (그래프와 같게 오른쪽 끝이 최신, 처음에 오른쪽 끝을 보여준다)
+ *  - 날짜 줄은 표 위에 고정 (아래로 내려도 어느 날인지 보이게), 검사 이름 열은 왼쪽에 고정
+ *  - 분류 필터: 고른 분류의 검사를 한 날만 열로 → 검사 주기가 달라 생기는 빈 칸이 줄어든다
+ *  - 분류 제목을 누르면 접기/펴기. 접힌 분류만 있는 날짜 열도 함께 빠진다
  *  - 병원마다 이름이 달라도 사전 기준으로 한 줄에 모은다
  *  - 범위 밖 칸은 색 + ▲▼(지난 검사 대비) 로 표시, 칸을 누르면 그날 기록으로
  */
 function trendTable(all) {
   if (!all.length) return '';
-  const dates = [];
-  all.forEach(function (s) { s.points.forEach(function (p) { if (dates.indexOf(p.date) < 0) dates.push(p.date); }); });
-  dates.sort();
   const groups = {};
   all.forEach(function (s) { const c = s.info ? s.info.cat : '기타'; (groups[c] = groups[c] || []).push(s); });
-  const cats = TEST_CATS.filter(function (c) { return groups[c]; });
-  let html = '<p class="muted">오른쪽 끝이 가장 최근 검사이고, 왼쪽에 이전 검사가 있어요 (손가락으로 표를 오른쪽으로 밀기). 검사 이름을 누르면 설명과 그래프를, 숫자를 누르면 그날 결과지를 볼 수 있어요.</p>' +
+  const allCats = TEST_CATS.filter(function (c) { return groups[c]; });
+  if (!S.tableCat || (S.tableCat !== '전체' && !groups[S.tableCat])) S.tableCat = '전체';
+  const fold = S.foldCats || (S.foldCats = {});
+  const cats = S.tableCat === '전체' ? allCats : [S.tableCat];
+  const open = function (c) { return S.tableCat !== '전체' || !fold[c]; };
+  const dates = [];
+  cats.filter(open).forEach(function (c) {
+    groups[c].forEach(function (s) { s.points.forEach(function (p) { if (dates.indexOf(p.date) < 0) dates.push(p.date); }); });
+  });
+  dates.sort();
+  let html = '<div class="chips tcats">' + ['전체'].concat(allCats).map(function (c) {
+      return '<button class="chip' + (S.tableCat === c ? ' on' : '') + '" data-tcat="' + esc(c) + '">' + esc(c) + (c === '전체' ? '' : ' ' + groups[c].length) + '</button>';
+    }).join('') + '</div>' +
+    '<p class="muted">오른쪽 끝이 가장 최근 검사이고, 왼쪽에 이전 검사가 있어요 (손가락으로 표를 오른쪽으로 밀기). ' +
+    (S.tableCat === '전체' ? '분류를 고르거나 분류 이름을 눌러 접으면 그 검사를 한 날짜만 남아요. ' : '<b>' + esc(S.tableCat) + '</b> 검사를 한 날짜만 보여요. ') +
+    '검사 이름을 누르면 설명과 그래프를, 숫자를 누르면 그날 결과지를 볼 수 있어요.</p>' +
     '<div class="mxwrap hscroll"><table class="mx"><thead><tr><th class="rowh" scope="col">검사</th>' +
     dates.map(function (d) { return '<th scope="col"><small>' + esc(d.slice(0, 4)) + '</small>' + esc(d.slice(5).replace('-', '.')) + '</th>'; }).join('') +
     '</tr></thead><tbody>';
   cats.forEach(function (c) {
-    html += '<tr class="grp"><th colspan="' + (dates.length + 1) + '"><span>' + esc(c) + '</span></th></tr>';
+    html += '<tr class="grp"><th colspan="' + (dates.length + 1) + '">' + (S.tableCat === '전체'
+      ? '<button class="fold" data-fold="' + esc(c) + '" aria-expanded="' + open(c) + '">' + (open(c) ? '▾ ' : '▸ ') + esc(c) + ' <small>' + groups[c].length + '개' + (open(c) ? '' : ' · 접힘') + '</small></button>'
+      : '<span>' + esc(c) + '</span>') + '</th></tr>';
+    if (!open(c)) return;
     groups[c].sort(function (a, b) {
       return (a.info ? a.info.order : 999) - (b.info ? b.info.order : 999) || a.name.localeCompare(b.name);
     }).forEach(function (s) {
