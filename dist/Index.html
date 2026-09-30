@@ -241,6 +241,10 @@
   ul.plain li:first-child { border-top: none; padding-top: 0; }
   ul.plain li[data-rid] { cursor: pointer; }
   ul.plain li small { display: block; color: var(--ink-2); font-size: 0.85em; }
+  /* 정리 도우미 */
+  .dup .tag { margin-top: 4px; }
+  .fixrec { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+  .fixrec .fixh small { display: block; color: var(--ink-2); font-size: 0.85em; }
   /* 앱 버전 (홈·로그인 맨 아래) */
   .appver { text-align: center; color: var(--ink-2); font-size: 0.82em; margin: 28px 0 8px; }
   .appver button { background: none; border: none; min-height: 48px; padding: 8px 14px; color: var(--ink-2); font-size: 1em; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
@@ -711,8 +715,12 @@ const TEST_INFO = [
  * ========================================================================= */
 
 // 앱 버전과 업데이트 이력: 고칠 때마다 맨 위에 추가하고 Code.gs 의 APP_VERSION 도 같이 올린다 (쉬운 말로)
-const APP_VERSION = '1.10';
+const APP_VERSION = '1.11';
 const CHANGELOG = [
+  { v: '1.11', date: '2026-09-30', items: [
+    '📊 결과지를 지우지 않고 "수치 변화 표·그래프에서만 빼기"를 할 수 있어요. 결과지 내용은 남아서 선생님 상담에 그대로 쓰여요.',
+    '🧹 결과지 화면 맨 위 "정리 도우미"가 겹쳐 보이는 결과지(예: 병원 문자와 실제 결과지)를 찾아 하나로 합치기를 추천해요. 합치면 수치·소견·사진·상담이 한곳에 모여요.',
+    '🔢 수치 칸에 단위가 같이 적힌 항목(예: 124 mg/dL)을 찾아 수치와 단위를 나누자고 제안해요. 고치기 전에도 그래프에는 숫자로 나와요.'] },
   { v: '1.10', date: '2026-09-29', items: [
     '📱 갤럭시 등 안드로이드 휴대폰에서 뒤로 버튼이 가끔 앱 밖으로 나가던 문제를 한 번 더 고쳤어요.'] },
   { v: '1.9', date: '2026-09-29', items: [
@@ -1437,6 +1445,12 @@ function viewRecords() {
     header('📄 결과지 모아보기', true) +
     (viewingOther() ? '<p class="notice"><b>' + esc(nim(S.viewName)) + '</b>의 결과지예요.</p>' : '') +
     '<p class="muted">올린 결과지 ' + S.records.length + '건 · 최근 것이 위에 있어요.</p>' +
+    (function () {
+      if (!canWrite()) return '';
+      const n = findDuplicates().length + unitFixes().length;
+      return n ? '<div class="card click family-card" id="tidy"><div class="row"><b class="grow">🧹 정리 도우미 · 확인할 것 ' + n + '개</b><span aria-hidden="true">›</span></div>' +
+        '<p class="muted" style="margin:4px 0 0">겹쳐 보이는 결과지, 수치 칸에 단위가 섞인 항목을 정리해요.</p></div>' : '';
+    })() +
     (types.length > 1 ? '<div class="chips">' + ['전체'].concat(types).map(function (f) {
       return '<button class="chip' + (S.filter === f ? ' on' : '') + '" data-f="' + esc(f) + '">' + esc(f) + '</button>';
     }).join('') + '</div>' : '') +
@@ -1450,6 +1464,153 @@ function viewRecords() {
   on('.chip[data-f]', 'click', function () { S.filter = this.getAttribute('data-f'); viewRecords(); });
   on('#search', 'change', function () { S.search = this.value.trim(); viewRecords(); });
   on('.card[data-id]', 'click', function () { viewDetail(this.getAttribute('data-id'), viewRecords); });
+  on('#tidy', 'click', viewTidy);
+}
+
+/* ---------------- 정리 도우미: 겹친 결과지 · 수치 칸 단위 ---------------- */
+
+/** 결과지 내용만 바꿔 저장 (사진은 그대로) */
+async function saveRecordData(r, d) {
+  await dcall('api_saveRecord', S.token, { recordId: r.recordId, encData: await Crypt.encryptJson(S.dek, d), imageIds: r.imageIds });
+  r.data = d; r.updatedAt = new Date().toISOString();
+}
+
+function sameValue(a, b) {
+  const x = toNum(a), y = toNum(b);
+  return !isNaN(x) && !isNaN(y) ? x === y : String(a).trim() === String(b).trim();
+}
+
+/**
+ * 겹쳐 보이는 결과지 쌍: 날짜가 30일 안이고, 같은 검사 수치가 3개 이상 & 작은 쪽 검사의 60% 이상 똑같은 경우.
+ * (예: 병원 문자로 먼저 올린 결과와 나중에 올린 실제 결과지). 표에서 뺐거나 "다른 기록이에요" 한 쌍은 빼고.
+ * keep = 내용이 더 많은 쪽(검사 수·사진·글), drop = 다른 쪽
+ */
+function findDuplicates() {
+  const recs = S.records.filter(function (r) { return !r.data.hideTrends && (r.data.tests || []).length; });
+  const out = [];
+  const size = function (r) { return (r.data.tests || []).length * 10 + r.imageIds.length * 5 + String(r.data.raw_text || '').length / 200 + (r.data.record_type === '문자·알림' ? -20 : 0); };
+  for (let i = 0; i < recs.length; i++) {
+    for (let j = i + 1; j < recs.length; j++) {
+      const a = recs[i], b = recs[j];
+      if ((a.data.notDup || []).indexOf(b.recordId) >= 0 || (b.data.notDup || []).indexOf(a.recordId) >= 0) continue;
+      const da = Date.parse(a.data.date || a.createdAt), db = Date.parse(b.data.date || b.createdAt);
+      if (!isNaN(da) && !isNaN(db) && Math.abs(da - db) > 30 * 864e5) continue;
+      const mapB = {};
+      (b.data.tests || []).forEach(function (t) { mapB[testKey(t.name)] = t; });
+      const same = [];
+      (a.data.tests || []).forEach(function (t) { const u = mapB[testKey(t.name)]; if (u && sameValue(t.value, u.value)) same.push(t); });
+      const small = Math.min(a.data.tests.length, b.data.tests.length);
+      if (same.length >= 3 && same.length >= small * 0.6) {
+        const keep = size(a) >= size(b) ? a : b;
+        out.push({ keep: keep, drop: keep === a ? b : a, same: same });
+      }
+    }
+  }
+  return out;
+}
+
+/** 수치 칸에 단위·H/L 표시가 섞인 항목 → 고칠 제안 */
+function unitFixes() {
+  const out = [];
+  S.records.forEach(function (r) {
+    (r.data.tests || []).forEach(function (t, i) {
+      const sp = splitValue(t.value);
+      if (!sp || typeof t.value !== 'string') return;
+      out.push({ r: r, i: i, t: t, value: sp.value, unit: sp.unit || t.unit || '',
+        flag: sp.flag && (!t.flag || t.flag === '판정없음') ? sp.flag : t.flag });
+    });
+  });
+  return out;
+}
+
+/** 두 결과지를 하나로: keep 쪽을 기준으로 drop 쪽에만 있는 내용을 보탠다 (수치·진단·약·할 일·소견·원문·메모·사진·상담) */
+function mergedData(keep, drop) {
+  const a = JSON.parse(JSON.stringify(keep.data)), b = drop.data;
+  const keys = {};
+  (a.tests = a.tests || []).forEach(function (t) { keys[testKey(t.name)] = true; });
+  (b.tests || []).forEach(function (t) { if (!keys[testKey(t.name)]) a.tests.push(t); });
+  const union = function (x, y) { const o = (x || []).slice(); (y || []).forEach(function (v) { if (o.indexOf(v) < 0) o.push(v); }); return o; };
+  a.diagnoses = union(a.diagnoses, b.diagnoses);
+  a.follow_up = union(a.follow_up, b.follow_up);
+  const meds = (a.medications = a.medications || []).map(function (m) { return m.name; });
+  (b.medications || []).forEach(function (m) { if (meds.indexOf(m.name) < 0) a.medications.push(m); });
+  const tag = '[합친 기록: ' + (b.title || '') + ' · ' + fmtDate(b.date) + ']';
+  const join = function (x, y) { return !y || x === y ? x : !x ? y : x + '\n\n' + tag + '\n' + y; };
+  a.summary = join(a.summary, b.summary);
+  a.doctor_opinion = join(a.doctor_opinion, b.doctor_opinion);
+  a.raw_text = join(a.raw_text, b.raw_text);
+  a.memo = join(a.memo, b.memo);
+  if (!a.next_visit) a.next_visit = b.next_visit;
+  if (!a.hospital) a.hospital = b.hospital;
+  delete a.notDup;
+  return a;
+}
+
+function viewTidy() {
+  const dups = findDuplicates(), fixes = unitFixes();
+  const recLine = function (r) {
+    return '<b>' + esc(r.data.title || '기록') + '</b><small>' + esc(fmtDate(r.data.date)) + ' · ' + esc(r.data.record_type || '기타') +
+      ' · 수치 ' + (r.data.tests || []).length + '개' + (r.imageIds.length ? ' · 📎 ' + r.imageIds.length : '') + '</small>';
+  };
+  const byRec = {};
+  fixes.forEach(function (f) { (byRec[f.r.recordId] = byRec[f.r.recordId] || []).push(f); });
+  render(
+    header('🧹 정리 도우미', true) +
+    '<p class="muted">지우지 않고도 정리할 수 있어요. 결과지 내용은 선생님 상담에 그대로 쓰여요.</p>' +
+    '<h2>🔁 겹쳐 보이는 결과지 ' + dups.length + '쌍</h2>' +
+    (dups.length ? dups.map(function (p, i) {
+      return '<div class="card dup"><p style="margin-top:0">같은 검사 수치가 <b>' + p.same.length + '개</b> 똑같아요 (' +
+        esc(p.same.slice(0, 3).map(function (t) { return (testInfo(t.name) ? testInfo(t.name).names[0] : t.name) + ' ' + t.value; }).join(', ')) + (p.same.length > 3 ? ' …' : '') + ').</p>' +
+        '<ul class="plain"><li>' + recLine(p.keep) + '<span class="tag">남길 결과지</span></li><li>' + recLine(p.drop) + '</li></ul>' +
+        '<div class="stack" style="margin-top:12px">' +
+        '<button class="primary block" data-merge="' + i + '">🔗 하나로 합치기</button>' +
+        '<button class="block" data-hide="' + i + '">📊 아래 결과지는 표·그래프에서만 빼기</button>' +
+        '<button class="block" data-notdup="' + i + '">다른 기록이에요 (다시 묻지 않기)</button></div>' +
+        '<p class="muted small">합치면 두 결과지의 수치·진단·소견·원문·사진·상담이 위 결과지 하나로 모여요. 빼기는 둘 다 남기고 표에만 안 보여요.</p></div>';
+    }).join('') : '<div class="card"><p>겹쳐 보이는 결과지가 없어요.</p></div>') +
+    '<h2>🔢 수치 칸에 단위가 섞인 항목 ' + fixes.length + '개</h2>' +
+    (fixes.length ? '<div class="card"><p style="margin-top:0">수치와 단위를 나눠 두면 그래프와 표에 정확히 나와요.</p>' +
+      Object.keys(byRec).map(function (id) {
+        const list = byRec[id];
+        return '<div class="fixrec"><div class="fixh">' + recLine(list[0].r) + '</div><ul class="plain">' + list.map(function (f) {
+          return '<li><b>' + esc(f.t.name) + '</b><small>"' + esc(f.t.value) + '"' + (f.t.unit ? ' · 단위 ' + esc(f.t.unit) : '') + ' → 수치 <b>' + esc(f.value) + '</b>' +
+            (f.unit ? ' · 단위 <b>' + esc(f.unit) + '</b>' : '') + (f.flag !== f.t.flag ? ' · 판정 <b>' + esc(f.flag) + '</b>' : '') + '</small></li>';
+        }).join('') + '</ul></div>';
+      }).join('') +
+      '<p><button class="primary block" id="fixAll">✅ ' + fixes.length + '개 모두 고치기</button></p></div>'
+      : '<div class="card"><p>고칠 항목이 없어요.</p></div>')
+  );
+  bindBack(viewRecords);
+  const act = async function (fn, msg) { try { loading('정리하는 중…'); await fn(); done(); toast(msg); viewTidy(); } catch (e) { showError(e); } };
+  on('[data-merge]', 'click', async function () {
+    const p = dups[Number(this.getAttribute('data-merge'))];
+    if (!(await confirmBox('"' + (p.drop.data.title || '기록') + '"의 내용을 "' + (p.keep.data.title || '기록') + '"에 합칠까요? 합친 뒤에는 결과지가 하나만 남아요.', '합치기'))) return;
+    act(async function () {
+      const d = mergedData(p.keep, p.drop);
+      const ids = p.keep.imageIds.concat(p.drop.imageIds.filter(function (x) { return p.keep.imageIds.indexOf(x) < 0; }));
+      await dcall('api_mergeRecords', S.token, p.keep.recordId, p.drop.recordId, await Crypt.encryptJson(S.dek, d), ids);
+      p.keep.data = d; p.keep.imageIds = ids;
+      S.records = S.records.filter(function (r) { return r !== p.drop; });
+    }, '하나로 합쳤어요.');
+  });
+  on('[data-hide]', 'click', function () {
+    const p = dups[Number(this.getAttribute('data-hide'))];
+    act(function () { return saveRecordData(p.drop, Object.assign({}, p.drop.data, { hideTrends: true })); }, '표·그래프에서 뺐어요. 결과지는 그대로 있어요.');
+  });
+  on('[data-notdup]', 'click', function () {
+    const p = dups[Number(this.getAttribute('data-notdup'))];
+    act(function () { return saveRecordData(p.keep, Object.assign({}, p.keep.data, { notDup: (p.keep.data.notDup || []).concat([p.drop.recordId]) })); }, '다시 묻지 않을게요.');
+  });
+  on('#fixAll', 'click', function () {
+    act(async function () {
+      for (const id of Object.keys(byRec)) {
+        const r = byRec[id][0].r;
+        const d = JSON.parse(JSON.stringify(r.data));
+        byRec[id].forEach(function (f) { Object.assign(d.tests[f.i], { value: f.value, unit: f.unit, flag: f.flag }); });
+        await saveRecordData(r, d);
+      }
+    }, '수치와 단위를 나눴어요.');
+  });
 }
 
 function recordCard(r) {
@@ -1464,7 +1625,7 @@ function recordCard(r) {
     '<span class="tag">' + esc(d.record_type || '기타') + '</span></div>' +
     '<div class="title">' + esc(d.title || '(제목 없음)') + '</div>' +
     '<div class="where">' + esc([d.hospital, d.department].filter(Boolean).join(' · ')) + (r.imageIds.length ? ' · 📎 원본 ' + r.imageIds.length : '') + '</div>' +
-    (status ? '<div style="margin-top:10px">' + status + '</div>' : '') +
+    (status || d.hideTrends ? '<div style="margin-top:10px">' + status + (d.hideTrends ? ' <span class="tag">📊 표에서 뺌</span>' : '') + '</div>' : '') +
     (d.summary ? '<div class="summary">' + esc(d.summary.length > 70 ? d.summary.slice(0, 70) + '…' : d.summary) + '</div>' : '') +
     '</div>';
 }
@@ -1941,9 +2102,19 @@ function viewDetail(recordId, onBack) {
     (r.imageIds.length ? '<div class="card"><h3>📷 원본 사진·PDF (' + r.imageIds.length + ')</h3><div id="photos"><button class="block" id="loadPhotos">원본 보기</button></div></div>' : '') +
     (d.raw_text ? '<div class="card"><details><summary>원문 텍스트</summary><p style="white-space:pre-wrap">' + esc(d.raw_text) + '</p></details></div>' : '') +
 
+    (d.hideTrends ? '<p class="notice">📊 이 결과지는 <b>수치 변화 표·그래프에서 뺐어요.</b> 내용은 그대로 남아 있고 선생님 상담에도 쓰여요.</p>' : '') +
+    (canWrite() && tests.length ? '<p style="margin-top:16px"><button class="block" id="hideT">' + (d.hideTrends ? '📊 수치 변화 표·그래프에 다시 넣기' : '📊 수치 변화 표·그래프에서 빼기 (결과지는 남겨요)') + '</button></p>' : '') +
     (canWrite() ? '<div class="row" style="margin-top:16px"><button class="grow" id="edit">✏️ 수정</button><button class="grow danger" id="del">🗑 삭제</button></div>' : '')
   );
   bindBack(back);
+  on('#hideT', 'click', async function () {
+    try {
+      loading();
+      await saveRecordData(r, Object.assign({}, d, { hideTrends: !d.hideTrends }));
+      done(); toast(r.data.hideTrends ? '수치 변화 표·그래프에서 뺐어요.' : '다시 넣었어요.');
+      viewDetail(recordId, onBack);
+    } catch (e) { showError(e); }
+  });
   on('#ask', 'click', function () { viewChat(recordId); });
   on('#edit', 'click', function () { viewEdit(recordId, d); });
   on('[data-test]', 'click', function () { viewTrend(this.getAttribute('data-test'), function () { viewDetail(recordId, onBack); }); });
@@ -2056,7 +2227,27 @@ function levelIndex(info, v) {
 }
 // 단위 비교용: 공백·대소문자 무시, 같은 단위의 다른 표기(IU/L = U/L, μ = u)는 같게
 function normUnit(u) { return String(u || '').replace(/\s/g, '').toLowerCase().replace(/[μµ]/g, 'u').replace(/^iu\/l$/, 'u/l'); }
-function toNum(v) { const s = String(v == null ? '' : v).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(s) ? parseFloat(s) : NaN; }
+function toNum(v) {
+  const s = String(v == null ? '' : v).replace(/,/g, '').trim();
+  if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  const sp = splitValue(s);
+  return sp ? sp.num : NaN;
+}
+
+/**
+ * 수치 칸에 단위·표시가 섞인 값 나누기: "124 mg/dL" → 124 + mg/dL, "135 H" → 135 + 높음, "12.3↑" → 12.3 + 높음
+ * 깔끔한 숫자이거나 나눌 수 없는 값(130/85, 3~5, 1+, 음성)은 null
+ */
+function splitValue(v) {
+  const s = String(v == null ? '' : v).replace(/,/g, '').trim();
+  const m = s.match(/^(-?\d+(?:\.\d+)?)\s*(\(\s*[HLhl]\s*\)|[HLhl](?![A-Za-z])|[↑↓▲▼]|\*)?\s*(.*)$/);
+  if (!m) return null;
+  const rest = m[3].trim();
+  if (!m[2] && !rest) return null;
+  if (rest && !/^(?:[A-Za-zµμ%㎎㎍㎖℃°㏄]|x\s*10|×\s*10|10\^)[A-Za-z0-9µμ%㎎㎍㎖℃°㏄\/·^.×\-\s²³()]*$/.test(rest)) return null;
+  const mk = (m[2] || '').replace(/[()\s*]/g, '').toUpperCase();
+  return { num: parseFloat(m[1]), value: m[1], unit: rest, flag: /H|↑|▲/.test(mk) ? '높음' : /L|↓|▼/.test(mk) ? '낮음' : '' };
+}
 
 /**
  * 참고치 글자를 { lo, hi } 로 읽는다. 못 읽으면 null.
@@ -2077,6 +2268,7 @@ function parseRange(s) {
 function collectSeries() {
   const map = {};
   S.records.forEach(function (r) {
+    if (r.data.hideTrends) return; // "표·그래프에서 빼기" 한 결과지 (상담에는 그대로 쓰임)
     const date = r.data.date || r.createdAt.slice(0, 10);
     (r.data.tests || []).forEach(function (t) {
       const key = testKey(t.name);

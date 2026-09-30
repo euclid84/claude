@@ -13,7 +13,7 @@
 
 const APP_NAME = '우리가족 진료기록';
 // 앱 버전: 고칠 때마다 올리고 App.html 의 APP_VERSION·CHANGELOG, 저장소의 CHANGELOG.md 도 함께 고친다
-const APP_VERSION = '1.10';
+const APP_VERSION = '1.11';
 
 /** 지금 배포된 서버 코드 버전 (화면 코드와 버전이 맞는지 확인용, 민감 정보 없음) */
 function api_version() { return APP_VERSION; }
@@ -758,6 +758,33 @@ function api_deleteRecord(token, recordId, ownerId) {
     deleteRows_(SHEETS.CHATS, chatRows);
     deleteRows_(SHEETS.RECORDS, [rec._row]);
     audit_(s.userId, 'record_delete', recordId);
+    return { ok: true };
+  });
+}
+
+/**
+ * 두 기록 합치기: keepId 기록을 합친 내용(encData·imageIds)으로 바꾸고, dropId 기록의 상담을 keepId로 옮긴 뒤 dropId 기록만 지운다.
+ * (dropId의 사진은 imageIds에 들어 있으면 keepId가 쓰므로 남는다)
+ */
+function api_mergeRecords(token, keepId, dropId, encData, imageIds, ownerId) {
+  const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
+  if (!keepId || !dropId || keepId === dropId) throw new Error('잘못된 요청입니다.');
+  assertEnc_(encData);
+  const ids = (imageIds || []).map(String);
+  ids.forEach(function (id) { assertOwnImage_(owner, id); });
+  return withLock_(function () {
+    const keep = ownRecord_(owner, keepId);
+    const drop = ownRecord_(owner, dropId);
+    updateRow_(SHEETS.RECORDS, keep._row, { updated_at: nowIso_(), enc_data: encData, image_ids: ids.join(',') });
+    readAll_(SHEETS.CHATS).forEach(function (c) {
+      if (String(c.user_id) === owner && String(c.record_id) === String(dropId)) updateRow_(SHEETS.CHATS, c._row, { record_id: keepId });
+    });
+    const fresh = ownRecord_(owner, dropId); // 위에서 행이 바뀌지 않았는지 다시 읽기
+    const dropImages = drop.image_ids ? String(drop.image_ids).split(',') : [];
+    trashIfUnused_(owner, dropImages.filter(function (id) { return ids.indexOf(id) === -1; }), dropId);
+    deleteRows_(SHEETS.RECORDS, [fresh._row]);
+    audit_(s.userId, 'record_merge', dropId + ' -> ' + keepId);
     return { ok: true };
   });
 }
@@ -1638,6 +1665,7 @@ function api_extract(token, req) {
       '- 자료에 적힌 값만 추출하고 없는 값은 만들지 마세요.',
       '- "SGOT/PT 30/40"처럼 묶인 값은 AST(SGOT)=30, ALT(SGPT)=40 두 항목으로 나누세요. 혈압 "130/85"도 수축기/이완기로 나누세요.',
       '- 검사명은 가능하면 다음 표준 이름을 쓰세요: ' + TEST_NAME_GUIDE,
+      '- value에는 숫자(또는 부등호+숫자)만 적고 단위는 반드시 unit에 따로 적으세요. 예) "124 mg/dL" → value="124", unit="mg/dL". 수치 옆 H/L/↑/↓ 표시는 value에 넣지 말고 flag로 옮기세요.',
       '- "<146 cpm" 같은 부등호 값은 value="<146", unit="cpm"처럼 그대로 두세요. 정성 결과는 "양성(+)", "음성(-)"으로 적으세요.',
       '- reference_range는 자료에 적힌 경우에만 채우세요.',
       '- flag: 자료의 H/L 표시나 판정을 우선 쓰세요. 참고치가 없으면 의사 코멘트를 따르세요(예: "정상"이면 정상, "약간 높지만 임상적 의미 없음"이면 해당 수치를 경계). 판단 근거가 없는 정성검사는 판정없음.',

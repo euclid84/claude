@@ -128,6 +128,33 @@ function api_deleteRecord(token, recordId, ownerId) {
   });
 }
 
+/**
+ * 두 기록 합치기: keepId 기록을 합친 내용(encData·imageIds)으로 바꾸고, dropId 기록의 상담을 keepId로 옮긴 뒤 dropId 기록만 지운다.
+ * (dropId의 사진은 imageIds에 들어 있으면 keepId가 쓰므로 남는다)
+ */
+function api_mergeRecords(token, keepId, dropId, encData, imageIds, ownerId) {
+  const s = requireSession_(token);
+  const owner = resolveOwner_(s, ownerId, 'write');
+  if (!keepId || !dropId || keepId === dropId) throw new Error('잘못된 요청입니다.');
+  assertEnc_(encData);
+  const ids = (imageIds || []).map(String);
+  ids.forEach(function (id) { assertOwnImage_(owner, id); });
+  return withLock_(function () {
+    const keep = ownRecord_(owner, keepId);
+    const drop = ownRecord_(owner, dropId);
+    updateRow_(SHEETS.RECORDS, keep._row, { updated_at: nowIso_(), enc_data: encData, image_ids: ids.join(',') });
+    readAll_(SHEETS.CHATS).forEach(function (c) {
+      if (String(c.user_id) === owner && String(c.record_id) === String(dropId)) updateRow_(SHEETS.CHATS, c._row, { record_id: keepId });
+    });
+    const fresh = ownRecord_(owner, dropId); // 위에서 행이 바뀌지 않았는지 다시 읽기
+    const dropImages = drop.image_ids ? String(drop.image_ids).split(',') : [];
+    trashIfUnused_(owner, dropImages.filter(function (id) { return ids.indexOf(id) === -1; }), dropId);
+    deleteRows_(SHEETS.RECORDS, [fresh._row]);
+    audit_(s.userId, 'record_merge', dropId + ' -> ' + keepId);
+    return { ok: true };
+  });
+}
+
 /* ---------------- 사진·PDF (암호화된 파일로 드라이브에 저장) ---------------- */
 
 function api_uploadImage(token, encB64, ownerId) {

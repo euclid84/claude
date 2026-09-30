@@ -459,6 +459,50 @@ async function addManualRecord(page, title) {
   check(await ip.evaluate(() => IOS === true) && (await ip.evaluate(() => window.__pushes.length)) > ipBefore, '뒤로 버튼(아이폰): 아이폰으로 알아보고, 뒤로 직후 칸을 다시 끼움 (기존 동작 유지)');
   await ip.close();
 
+  // 10-9) 정리 도우미: 수치 칸 단위 나누기, 표에서 빼기, 겹친 결과지 합치기 (상담도 옮김)
+  const tp = await newUserPage(browser);
+  await signupAndLogin(tp, '정리', '1234');
+  const sv = await tp.evaluate(() => ['124 mg/dL', '135 H', '12.3↑', '130/85', '3~5', '1+', '음성', '5', '4.5 x10^3/uL'].map(x => { const p = splitValue(x); return p ? p.value + '|' + p.unit + '|' + p.flag : '-'; }).join(','));
+  check(sv === '124|mg/dL|,135||높음,12.3||높음,-,-,-,-,-,4.5|x10^3/uL|', '수치 칸: 단위·H/L 섞인 값 읽기 → ' + sv);
+  check(await tp.evaluate(() => toNum('124 mg/dL') === 124 && isNaN(toNum('130/85'))), '수치 칸: 단위가 섞여도 그래프에는 숫자로');
+  const TT = (name, value, unit) => ({ name, value, unit: unit || '', flag: '정상' });
+  const dupRecs = [
+    { title: '병원 문자 결과', date: '2026-09-20', record_type: '문자·알림', tests: [TT('LDL 콜레스테롤', '124 mg/dL'), TT('AST', '32', 'U/L'), TT('ALT', '30', 'U/L'), TT('혈색소', '14.6', 'g/dL')] },
+    { title: '건강검진 결과지', date: '2026-09-25', record_type: '정기건강검진', doctor_opinion: '복부 초음파: 경도 지방간', tests: [TT('LDL 콜레스테롤', '124', 'mg/dL'), TT('AST(SGOT)', '32', 'U/L'), TT('ALT(SGPT)', '30', 'U/L'), TT('혈색소', '14.6', 'g/dL'), TT('eGFR', '87', 'mL/min')] },
+    { title: '작년 검진', date: '2025-09-01', record_type: '정기건강검진', tests: [TT('LDL 콜레스테롤', '140', 'mg/dL'), TT('AST', '30', 'U/L')] }
+  ];
+  for (const d of dupRecs) { await tp.evaluate(d => viewEdit(null, d), d); await tp.click('#save'); await waitIdle(tp); }
+  // 문자 결과에 상담 하나 (합칠 때 옮겨지는지 확인)
+  const smsId = await tp.evaluate(() => S.records.find(r => r.data.title === '병원 문자 결과').recordId);
+  await tp.evaluate(id => viewDetail(id), smsId); await waitIdle(tp);
+  await tp.click('#ask'); await waitIdle(tp);
+  await tp.fill('#q', '문자 결과 질문'); await tp.click('#send'); await waitIdle(tp);
+  await tp.evaluate(() => viewRecords()); await waitIdle(tp);
+  check((await tp.innerText('#tidy')).includes('확인할 것 2개'), '정리 도우미: 결과지 화면에 "확인할 것 2개" (겹침 1 + 단위 1)');
+  await tp.click('#tidy'); await waitIdle(tp);
+  let tidy = await bodyText(tp);
+  check(tidy.includes('겹쳐 보이는 결과지 1쌍') && tidy.includes('같은 검사 수치가 4개') && await tp.evaluate(() => document.querySelector('.dup .tag').closest('li').innerText.includes('건강검진 결과지')), '정리 도우미: 문자·결과지 겹침 찾기, 내용 많은 쪽을 남길 결과지로');
+  check(tidy.includes('"124 mg/dL"') && tidy.includes('수치 124') && tidy.includes('단위 mg/dL'), '정리 도우미: 수치 칸 단위 고치기 제안');
+  await tp.screenshot({ path: OUT + '/tidy.png', fullPage: true });
+  await tp.click('#fixAll'); await waitIdle(tp);
+  check(await tp.evaluate(() => { const t = S.records.find(r => r.data.title === '병원 문자 결과').data.tests[0]; return t.value === '124' && t.unit === 'mg/dL'; }), '정리 도우미: 모두 고치기 → 수치·단위 나눔');
+  await tp.click('[data-hide]'); await waitIdle(tp);
+  check(await tp.evaluate(() => S.records.find(r => r.data.title === '병원 문자 결과').data.hideTrends === true && collectSeries().find(s => s.key === testKey('LDL')).points.length === 2), '표에서 빼기: 문자 결과는 표·그래프에서 빠지고 결과지는 남음');
+  await tp.evaluate(id => viewDetail(id), smsId); await waitIdle(tp);
+  check((await bodyText(tp)).includes('표·그래프에서 뺐어요'), '표에서 빼기: 결과지 화면에 안내');
+  await tp.click('#hideT'); await waitIdle(tp);
+  check(await tp.evaluate(() => !S.records.find(r => r.data.title === '병원 문자 결과').data.hideTrends), '표에서 빼기: 다시 넣기');
+  await tp.evaluate(() => viewTidy()); await waitIdle(tp);
+  await tp.click('[data-notdup]'); await waitIdle(tp);
+  check((await bodyText(tp)).includes('겹쳐 보이는 결과지 0쌍'), '다른 기록이에요: 다시 묻지 않음');
+  await tp.evaluate(async () => { const r = S.records.find(r => r.data.title === '건강검진 결과지'); await saveRecordData(r, Object.assign({}, r.data, { notDup: [] })); viewTidy(); }); await waitIdle(tp);
+  await tp.click('[data-merge]'); await tp.waitForSelector('[data-a="yes"]'); await tp.click('[data-a="yes"]'); await waitIdle(tp);
+  const merged = await tp.evaluate(() => { const r = S.records.find(r => r.data.title === '건강검진 결과지'); return { n: S.records.length, tests: r.data.tests.length, op: r.data.doctor_opinion, id: r.recordId }; });
+  check(merged.n === 2 && merged.tests === 5 && merged.op.includes('경도 지방간'), '합치기: 결과지 하나로 (수치·소견 유지) → ' + JSON.stringify(merged));
+  const chatsNow = await tp.evaluate(() => new Promise(res => google.script.run.withSuccessHandler(res).api_listChats(S.token, '*', null)));
+  check(chatsNow.length === 2 && chatsNow.every(c => c.recordId === merged.id), '합치기: 문자 결과에서 한 상담이 합친 결과지로 옮겨짐');
+  await tp.close();
+
   // 11) 버전 표시·업데이트 이력·숨은 인사
   const ver = await tr.evaluate(() => APP_VERSION);
   check(ver === gas.ctx.api_version(), '버전: 화면 코드와 서버 코드 버전이 같음 (v' + ver + ')');
